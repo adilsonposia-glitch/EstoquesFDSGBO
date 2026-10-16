@@ -1,7 +1,7 @@
 import { analyze, lojasFromXlsx, LOJAS } from "./engine.js";
 
 const VIEWS = [
-  ["rede", "Rede"],
+  ["capa", "Capa"],
   ["lojas", "Lojas"],
   ["compradores", "Compradores"],
   ["ruptura", "Ruptura"],
@@ -14,7 +14,9 @@ const VIEWS = [
 ];
 
 const state = {
-  view: "rede",
+  view: "capa",
+  foco: "comprador",
+  detalheTitulo: "",
   result: null,
   page: 0,
   pageSize: 40,
@@ -67,6 +69,10 @@ async function collectFromDirectory(dir) {
       continue;
     }
     const key = name.toLowerCase();
+    if (key.startsWith("ofertasdoper")) {
+      found.buffers.ofertas = handle;
+      continue;
+    }
     if (["estoqueinicio.txt", "estoquefim.txt", "entradas.txt", "dimproduto.txt", "automatico.txt", "lojas.xlsx"].includes(key)) {
       found.buffers[key] = handle;
     }
@@ -92,7 +98,9 @@ async function loadServerFiles() {
   const discovered = await collectFromServer();
   const sales = [];
   let step = 0;
-  const jobs = discovered.found.sales.length + 5;
+  const jobs = discovered.found.sales.length + 6;
+  const offerName = discovered.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
+  if (!offerName) throw new Error("Falta o arquivo Ofertas do período.");
   for (const date of discovered.found.sales) {
     step += 1;
     setProgress(step / jobs, `Lendo ${date}.txt`);
@@ -111,11 +119,12 @@ async function loadServerFiles() {
   const entradas = await textFile("Entradas.txt");
   const dim = await textFile("Dimproduto.txt");
   const automatico = await textFile("Automatico.txt");
+  const ofertas = await textFile(offerName);
   step += 1;
   setProgress(0.92, "Lendo Lojas.xlsx");
   const lojasResponse = await fetch("../Lojas.xlsx");
   const lojas = await lojasFromXlsx(await lojasResponse.arrayBuffer());
-  return { sales, inicio, fim, entradas, dim, automatico, lojas };
+  return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
 }
 
 async function loadDirectory(dir) {
@@ -136,9 +145,12 @@ async function loadDirectory(dir) {
   const entradas = decode(await readHandle(await required("Entradas.txt")));
   const dim = decode(await readHandle(await required("Dimproduto.txt")));
   const automatico = decode(await readHandle(await required("Automatico.txt")));
+  if (!found.buffers.ofertas) throw new Error("Falta o arquivo Ofertas do período.");
+  setProgress(0.7, "Lendo Ofertas do período");
+  const ofertas = decode(await readHandle(found.buffers.ofertas));
   const lojasHandle = await required("Lojas.xlsx");
   const lojas = await lojasFromXlsx(await readHandle(lojasHandle));
-  return { sales, inicio, fim, entradas, dim, automatico, lojas };
+  return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
 }
 
 async function run(loader) {
@@ -186,6 +198,15 @@ function currentRows() {
   if (state.view === "excecao") {
     if (state.grupo === "insuficiente") rows = rows.filter((row) => row.excecao === "entrada-insuficiente");
     else rows = rows.filter((row) => row.excecao === "sem-entrada");
+  }
+  if (state.view === "detalhe") {
+    if (state.grupo === "automatico") rows = rows.filter((row) => row.automatico);
+    if (state.grupo === "manual") rows = rows.filter((row) => row.manual);
+    if (state.grupo === "provavel") rows = rows.filter((row) => row.provavel);
+    if (state.grupo === "ruptura") rows = rows.filter((row) => row.situacao === "zero");
+    if (state.grupo === "excesso") rows = rows.filter((row) => row.irregular);
+    if (state.grupo === "sem-venda") rows = rows.filter((row) => !row.vendeu && row.situacao === "positivo");
+    if (state.grupo === "sem-entrada") rows = rows.filter((row) => row.excecao === "sem-entrada");
   }
   return rows;
 }
@@ -247,7 +268,7 @@ function detailColumns() {
 }
 
 function render() {
-  title.textContent = VIEWS.find(([id]) => id === state.view)[1];
+  title.textContent = state.view === "detalhe" ? state.detalheTitulo : VIEWS.find(([id]) => id === state.view)[1];
   [...nav.children].forEach((button) => button.classList.toggle("active", button.dataset.view === state.view));
   const result = state.result;
   if (!result) {
@@ -255,7 +276,8 @@ function render() {
     return;
   }
   subtitle.textContent = `${result.periodo[0]} a ${result.periodo[3]} · quinta a domingo`;
-  if (state.view === "rede") renderRede(result);
+  if (state.view === "capa") renderCapa(result);
+  else if (state.view === "detalhe") renderDetalhe();
   else if (state.view === "lojas") renderLojas(result);
   else if (state.view === "compradores") renderBuyers(result);
   else if (state.view === "datas") renderDatas(result);
@@ -264,18 +286,77 @@ function render() {
   else renderDetail(result);
 }
 
-function renderRede(result) {
+const CAPA_METRICS = [
+  ["automatico", "Abastecimento automático", (row) => row.automatico / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual],
+  ["manual", "Abastecimento manual", (row) => row.manual / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual],
+  ["provavel", "Ruptura provável", (row) => row.comVenda ? row.provavel / row.comVenda : 0, (row) => row.comVenda],
+  ["ruptura", "Ruptura", (row) => row.comPosicao ? row.ruptura / row.comPosicao : 0, (row) => row.comPosicao],
+  ["excesso", "Excesso de estoque", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares],
+  ["sem-venda", "Sem venda com saldo", (row) => row.pares ? row.semVendaSaldo / row.pares : 0, (row) => row.pares],
+  ["sem-entrada", "Sem entrada", (row) => row.pares ? row.excecaoSem / row.pares : 0, (row) => row.pares],
+];
+
+function renderCapa(result) {
   const rede = result.rede;
+  const people = state.foco === "loja" ? result.lojas : result.compradores.filter((row) => row.pares > 0);
+  const cards = people.map((row) => {
+    const name = row.nome || row.comprador;
+    const metrics = CAPA_METRICS.map(([id, label, ratio, base]) => {
+      const total = base(row);
+      if (!total && (id === "automatico" || id === "manual")) return "";
+      return `<button type="button" class="metric" data-metric="${id}" data-nome="${name.replace(/"/g, "&quot;")}" data-loja="${row.id || ""}" data-comprador="${row.comprador || ""}"><span>${label}</span><strong>${total ? pct(ratio(row)) : "—"}</strong></button>`;
+    }).join("");
+    return `<article class="person"><h2>${name}</h2>${metrics}</article>`;
+  }).join("");
   view.innerHTML = `
     <div class="cards">
       <article class="card"><span>Venda da oferta</span><strong>${money(rede.venda)}</strong></article>
-      <article class="card"><span>Venda total das lojas</span><strong>${money(rede.total)}</strong></article>
-      <article class="card"><span>Participação</span><strong>${pct(rede.participacao)}</strong></article>
+      <article class="card"><span>Venda total do período</span><strong>${money(rede.total)}</strong></article>
+      <article class="card"><span>Participação da oferta</span><strong>${pct(rede.participacao)}</strong></article>
       <article class="card"><span>Produtos de oferta</span><strong>${result.quality.produtosOferta.toLocaleString("pt-BR")}</strong></article>
       <article class="card"><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
       <article class="card"><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
-    <p class="note">A participação é a venda dos quatro dias dividida pelo valor de Lojas.xlsx. As duas colunas de resultado não são a mesma conta.</p>`;
+    <div class="switch">
+      <button type="button" class="${state.foco === "comprador" ? "" : "secondary"}" data-foco="comprador">Por comprador</button>
+      <button type="button" class="${state.foco === "loja" ? "" : "secondary"}" data-foco="loja">Por loja</button>
+    </div>
+    <div class="people">${cards}</div>
+    <p class="note">Os percentuais são da oferta. Automático e manual usam as linhas de revenda. O clique abre os produtos daquele percentual.</p>`;
+  view.querySelectorAll("[data-foco]").forEach((button) => {
+    button.onclick = () => { state.foco = button.dataset.foco; render(); };
+  });
+  view.querySelectorAll(".metric").forEach((button) => {
+    button.onclick = () => {
+      state.view = "detalhe";
+      state.grupo = button.dataset.metric;
+      state.page = 0;
+      state.texto = "";
+      if (state.foco === "loja") {
+        state.loja = button.dataset.loja;
+        state.comprador = "";
+      } else {
+        state.comprador = button.dataset.comprador;
+        state.loja = "";
+      }
+      const metric = CAPA_METRICS.find(([id]) => id === state.grupo);
+      state.detalheTitulo = `${button.dataset.nome} · ${metric[1]}`;
+      render();
+    };
+  });
+}
+
+function renderDetalhe() {
+  const rows = currentRows();
+  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button></div>${filters()}${table(detailColumns(), rows)}`;
+  document.querySelector("#voltar").onclick = () => {
+    state.view = "capa";
+    state.loja = "";
+    state.comprador = "";
+    state.page = 0;
+    render();
+  };
+  bindFilters(rows);
 }
 
 function renderLojas(result) {
@@ -396,6 +477,9 @@ nav.onclick = (event) => {
   if (!button) return;
   state.view = button.dataset.view;
   state.page = 0;
+  state.loja = "";
+  state.comprador = "";
+  state.detalheTitulo = "";
   if (state.view === "sem-venda") state.grupo = "positivo";
   if (state.view === "ruptura") state.grupo = "zero";
   if (state.view === "excecao") state.grupo = "sem-entrada";

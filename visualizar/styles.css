@@ -83,6 +83,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; color: var(--muted); font-size: 13px; }
 .pager button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; }
 .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.switch { display: flex; gap: 8px; margin: 4px 0 14px; }
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.person { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 8px; box-shadow: var(--shadow); }
+.person h2 { margin: 0 0 8px; font-size: 16px; }
+.metric { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; color: inherit; padding: 9px 0; text-align: left; }
+.metric span { color: var(--muted); font-size: 13px; }
+.metric strong { font-size: 16px; color: var(--navy); }
+.metric:hover { background: var(--navy-soft); }
 .tag { display: inline-block; border-radius: 999px; padding: 2px 8px; background: var(--navy-soft); color: var(--navy); font-size: 12px; }
 .hidden { display: none; }
 

@@ -106,6 +106,8 @@ function analyze(input) {
   const salesCost = new Map();
   const sold = new Set();
   const offer = new Set();
+  const periodByStore = {};
+  let periodTotal = 0;
   let salesRows = 0;
 
   for (const file of salesFiles) {
@@ -121,11 +123,13 @@ function analyze(input) {
       if (!KEEP.has(store) || store === "70") continue;
       const product = parts[1];
       const key = `${store}|${product}`;
+      const value = num(parts[4]);
       salesRows += 1;
-      offer.add(product);
       sold.add(key);
+      periodByStore[store] = (periodByStore[store] || 0) + value;
+      periodTotal += value;
       salesQty.set(key, (salesQty.get(key) || 0) + num(parts[3]));
-      salesValue.set(key, (salesValue.get(key) || 0) + num(parts[4]));
+      salesValue.set(key, (salesValue.get(key) || 0) + value);
       salesProfit.set(key, (salesProfit.get(key) || 0) + num(parts[5]));
       salesCost.set(key, (salesCost.get(key) || 0) + num(parts[6]));
     }
@@ -144,6 +148,30 @@ function analyze(input) {
       n3: parts[13] || "",
       n4: parts[14] || "",
     });
+  }
+
+  if (!input.ofertas) {
+    return { ok: false, message: "Falta o arquivo Ofertas do período." };
+  }
+  const offerRows = linesOf(input.ofertas);
+  if (!offerRows[0] || !offerRows[0].startsWith("NROEMPRESA;")) {
+    return { ok: false, message: "Cabeçalho inesperado em Ofertas do período." };
+  }
+  const offerValueStore = {};
+  const offerValueBuyer = {};
+  let offerValue = 0;
+  for (let index = 1; index < offerRows.length; index += 1) {
+    const parts = offerRows[index].split(";");
+    if (parts.length < 11) continue;
+    const store = parts[0];
+    if (!RETAIL.includes(store)) continue;
+    const product = parts[6];
+    offer.add(product);
+    const value = num(parts[10]);
+    offerValue += value;
+    offerValueStore[store] = (offerValueStore[store] || 0) + value;
+    const buyerName = dim.get(product)?.comprador || "Sem comprador";
+    offerValueBuyer[buyerName] = (offerValueBuyer[buyerName] || 0) + value;
   }
 
   const inicial = new Map();
@@ -235,9 +263,16 @@ function analyze(input) {
         margem: 0,
         totalLoja: lojasTotal[id] || 0,
         ruptura: 0,
+        provavel: 0,
         irregular: 0,
+        excecaoSem: 0,
         semVendaSaldo: 0,
         semVendaZero: 0,
+        pares: 0,
+        comVenda: 0,
+        comPosicao: 0,
+        automatico: 0,
+        manual: 0,
       });
     }
     return lojas.get(id);
@@ -255,11 +290,9 @@ function analyze(input) {
     entradasRepetidas,
   };
 
-  let redeVenda = 0;
   let redeLucro = 0;
   let redeMargem = 0;
-  let redeTotal = 0;
-  for (const id of RETAIL) redeTotal += lojasTotal[id] || 0;
+  const redeTotal = periodTotal;
 
   for (const product of offer) {
     const info = dim.get(product) || {
@@ -285,16 +318,15 @@ function analyze(input) {
       const buyer = ensureBuyer(info.comprador);
       const storeRow = ensureStore(store);
       buyer.pares += 1;
+      storeRow.pares += 1;
 
       if (hasSale) {
         buyer.comVenda += 1;
-        buyer.venda += vv;
+        storeRow.comVenda += 1;
         buyer.lucro += lucro;
         buyer.margem += margem;
-        storeRow.venda += vv;
         storeRow.lucro += lucro;
         storeRow.margem += margem;
-        redeVenda += vv;
         redeLucro += lucro;
         redeMargem += margem;
       }
@@ -309,6 +341,7 @@ function analyze(input) {
         if (hasSale) quality.semPosicaoVenda += 1;
       } else {
         buyer.comPosicao += 1;
+        storeRow.comPosicao += 1;
         if (Math.abs(ef) <= EPS) {
           situacao = "zero";
           buyer.ruptura += 1;
@@ -325,6 +358,7 @@ function analyze(input) {
           if (cobertura < coverLimit) {
             provavel = true;
             buyer.provavel += 1;
+            storeRow.provavel += 1;
           }
         }
 
@@ -348,7 +382,10 @@ function analyze(input) {
           buyer.irregular += 1;
           storeRow.irregular += 1;
         }
-        if (excecao === "sem-entrada") buyer.excecaoSem += 1;
+        if (excecao === "sem-entrada") {
+          buyer.excecaoSem += 1;
+          storeRow.excecaoSem += 1;
+        }
         if (excecao === "entrada-insuficiente") buyer.excecaoInsuf += 1;
         if (hasSale && Math.abs(ef - (qi + en - qv)) <= EPS) quality.fecha += 1;
       }
@@ -409,20 +446,27 @@ function analyze(input) {
   const sistematica = { nomesDiferentes: 0, linhas: 0 };
   const datas = [];
   const grupos = new Map();
+  const modos = new Map();
   if (input.automatico) {
     const rows = linesOf(input.automatico);
     for (let index = 1; index < rows.length; index += 1) {
       const parts = rows[index].split(";");
       if (parts.length < 29) continue;
       const product = parts[5];
+      if (!offer.has(product)) continue;
       const info = dim.get(product);
       const buyerName = info ? info.comprador : "Sem comprador";
       const buyer = ensureBuyer(buyerName);
       const kind = classeLinha(parts[28]);
+      const store = parts[0];
+      const storeRow = RETAIL.includes(store) ? ensureStore(store) : null;
       sistematica.linhas += 1;
-      if (kind === "automatico") buyer.automatico += 1;
-      else if (kind === "manual") {
+      if (kind === "automatico") {
+        buyer.automatico += 1;
+        if (storeRow) storeRow.automatico += 1;
+      } else if (kind === "manual") {
         buyer.manual += 1;
+        if (storeRow) storeRow.manual += 1;
         const primeiro = buyerName.split(" ")[0].toUpperCase();
         if (primeiro !== parts[28].trim().toUpperCase()) sistematica.nomesDiferentes += 1;
       } else if (kind === "embalagem") buyer.embalagem += 1;
@@ -431,6 +475,9 @@ function analyze(input) {
 
       if (kind !== "automatico" && kind !== "manual") continue;
       const key = `${parts[0]}|${product}`;
+      if (!modos.has(key)) modos.set(key, { automatico: false, manual: false });
+      if (kind === "automatico") modos.get(key).automatico = true;
+      if (kind === "manual") modos.get(key).manual = true;
       if (!grupos.has(key)) grupos.set(key, { aut: "", man: [], loja: parts[0], produto: product });
       const group = grupos.get(key);
       const when = stamp(parts[22]);
@@ -464,20 +511,35 @@ function analyze(input) {
     });
   }
 
-  const lojaRows = RETAIL.map((id) => ensureStore(id)).map((row) => ({
-    ...row,
-    participacao: row.totalLoja ? row.venda / row.totalLoja : 0,
-  }));
+  for (const row of details) {
+    const modo = modos.get(`${row.loja}|${row.produto}`);
+    row.automatico = Boolean(modo?.automatico);
+    row.manual = Boolean(modo?.manual);
+  }
+
+  for (const buyer of compradores.values()) {
+    buyer.venda = offerValueBuyer[buyer.comprador] || 0;
+  }
+
+  const lojaRows = RETAIL.map((id) => {
+    const row = ensureStore(id);
+    row.venda = offerValueStore[id] || 0;
+    row.totalLoja = periodByStore[id] || 0;
+    return {
+      ...row,
+      participacao: row.totalLoja ? row.venda / row.totalLoja : 0,
+    };
+  });
 
   return {
     ok: true,
     periodo: period.dates,
     rede: {
-      venda: redeVenda,
+      venda: offerValue,
       lucro: redeLucro,
       margem: redeMargem,
       total: redeTotal,
-      participacao: redeTotal ? redeVenda / redeTotal : 0,
+      participacao: redeTotal ? offerValue / redeTotal : 0,
     },
     lojas: lojaRows,
     compradores: [...compradores.values()].sort((a, b) => b.venda - a.venda || a.comprador.localeCompare(b.comprador)),
