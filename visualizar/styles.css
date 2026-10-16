@@ -1,0 +1,93 @@
+:root {
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --ink: #1c2430;
+  --muted: #5c6775;
+  --line: #e6e8ee;
+  --sidebar: #f4f6f8;
+  --navy: #1d3c6e;
+  --navy-soft: #e8eef8;
+  --ok: #0f7b4c;
+  --warn: #9a6412;
+  --bad: #a33b32;
+  --shadow: 0 1px 2px rgba(28, 36, 48, 0.06), 0 8px 24px rgba(28, 36, 48, 0.04);
+  font-family: "Segoe UI", Inter, ui-sans-serif, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--ink); background: var(--bg); }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+
+.shell { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+.sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+  padding: 20px 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: auto;
+}
+.main { min-width: 0; }
+.brand { display: block; width: 100%; height: 58px; object-fit: contain; object-position: left center; background: #fff; border-radius: 12px; padding: 6px 8px; }
+.brand-caption { margin: 10px 8px 18px; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
+nav { display: flex; flex-direction: column; gap: 4px; }
+nav button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+nav button.active, nav button:hover { background: #fff; color: var(--navy); }
+
+.main { padding: 28px 32px 48px; }
+.top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 22px; }
+h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.03em; }
+.sub { margin: 0; color: var(--muted); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions button, .filters button {
+  border: 0;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.actions button.secondary, .filters button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--line); }
+.status { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.progress { height: 4px; background: var(--line); border-radius: 99px; margin: 14px 0 18px; overflow: hidden; }
+.progress span { display: block; height: 100%; width: 0; background: var(--navy); transition: width 0.2s ease; }
+
+.cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; box-shadow: var(--shadow); }
+.card span { display: block; color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+.card strong { display: block; font-size: 22px; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.card em { display: block; margin-top: 6px; font-style: normal; color: var(--navy); font-size: 12px; font-weight: 600; }
+
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.filters input, .filters select {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 9px 10px;
+  min-width: 160px;
+}
+
+.table-wrap { background: #fff; border: 1px solid var(--line); border-radius: 16px; overflow: auto; box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; background: #fbfcfd; position: sticky; top: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; color: var(--muted); font-size: 13px; }
+.pager button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; }
+.note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.tag { display: inline-block; border-radius: 999px; padding: 2px 8px; background: var(--navy-soft); color: var(--navy); font-size: 12px; }
+.hidden { display: none; }
+
+@media (max-width: 980px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { position: relative; height: auto; }
+  .cards { grid-template-columns: 1fr 1fr; }
+}

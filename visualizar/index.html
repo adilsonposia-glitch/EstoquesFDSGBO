@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oferta de fim de semana — Adilson Baptista</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <img class="brand" src="../LogoABB.jpeg" alt="Adilson Baptista, inteligência de negócio">
+      <p class="brand-caption">Oferta de fim de semana</p>
+      <nav id="nav"></nav>
+    </aside>
+    <main class="main">
+      <header class="top">
+        <div>
+          <h1 id="title">Rede</h1>
+          <p class="sub" id="subtitle">Quinta a domingo. Os arquivos ficam nesta máquina.</p>
+        </div>
+        <div class="actions">
+          <button type="button" id="pick">Escolher pasta</button>
+          <button type="button" class="secondary" id="reload">Atualizar</button>
+          <button type="button" class="secondary" id="export">Exportar CSV</button>
+        </div>
+      </header>
+      <p class="status" id="status">Procurando os arquivos da semana nesta pasta.</p>
+      <div class="progress" aria-hidden="true"><span id="bar"></span></div>
+      <section id="view"></section>
+    </main>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
