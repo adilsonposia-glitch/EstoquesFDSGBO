@@ -84,13 +84,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pager button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; }
 .note { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
 .switch { display: flex; gap: 8px; margin: 4px 0 14px; }
-.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.person { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 8px; box-shadow: var(--shadow); }
-.person h2 { margin: 0 0 8px; font-size: 16px; }
-.metric { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; color: inherit; padding: 9px 0; text-align: left; }
-.metric span { color: var(--muted); font-size: 13px; }
-.metric strong { font-size: 16px; color: var(--navy); }
+.capa-table th:first-child, .capa-table td:first-child { position: sticky; left: 0; background: #fff; z-index: 1; min-width: 180px; }
+.capa-table th:first-child { z-index: 3; background: #fbfcfd; }
+.capa-table td.num { padding: 4px 8px; }
+.metric { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 1px; border: 0; background: transparent; color: var(--navy); font-weight: 700; font-variant-numeric: tabular-nums; padding: 6px 4px; border-radius: 8px; cursor: pointer; line-height: 1.15; }
 .metric:hover { background: var(--navy-soft); }
+.metric small, .card em.itens { color: #b42318; font-style: normal; font-weight: 700; font-size: 12px; }
+button.card { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.card:hover { border-color: var(--navy); }
+.section { font-size: 16px; margin: 18px 0 10px; }
 .tag { display: inline-block; border-radius: 999px; padding: 2px 8px; background: var(--navy-soft); color: var(--navy); font-size: 12px; }
 .hidden { display: none; }
 

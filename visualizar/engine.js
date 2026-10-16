@@ -246,6 +246,8 @@ function analyze(input) {
         semVendaZero: 0,
         automatico: 0,
         manual: 0,
+        ambos: 0,
+        comAbastecimento: 0,
         embalagem: 0,
         materia: 0,
         uso: 0,
@@ -273,6 +275,8 @@ function analyze(input) {
         comPosicao: 0,
         automatico: 0,
         manual: 0,
+        ambos: 0,
+        comAbastecimento: 0,
       });
     }
     return lojas.get(id);
@@ -515,6 +519,15 @@ function analyze(input) {
     const modo = modos.get(`${row.loja}|${row.produto}`);
     row.automatico = Boolean(modo?.automatico);
     row.manual = Boolean(modo?.manual);
+    if (!row.automatico && !row.manual) continue;
+    const buyer = ensureBuyer(row.comprador);
+    const storeRow = ensureStore(row.loja);
+    buyer.comAbastecimento += 1;
+    storeRow.comAbastecimento += 1;
+    if (row.automatico && row.manual) {
+      buyer.ambos += 1;
+      storeRow.ambos += 1;
+    }
   }
 
   for (const buyer of compradores.values()) {

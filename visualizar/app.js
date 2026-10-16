@@ -22,10 +22,14 @@ const state = {
   pageSize: 40,
   loja: "",
   comprador: "",
+  produto: "",
+  busca: "",
   texto: "",
   grupo: "zero",
   coverLimit: 1,
   files: null,
+  semanas: [],
+  repeticao: "",
 };
 
 const nav = document.querySelector("#nav");
@@ -44,6 +48,59 @@ function pct(value) {
 function qty(value) {
   if (value == null || Number.isNaN(value)) return "—";
   return value.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+}
+function itens(value) {
+  return Math.round(value || 0).toLocaleString("pt-BR");
+}
+function diaNumero(text) {
+  const [dia, mes, ano] = String(text).split("-").map(Number);
+  return new Date(ano, mes - 1, dia).getTime();
+}
+function diaCurto(text) {
+  const [dia, mes] = String(text).split("-");
+  return `${dia}/${mes}`;
+}
+
+const SEMANAS_KEY = "fds-oferta-semanas";
+
+function guardarSemana(result) {
+  const produtos = [...new Set(result.details.map((row) => String(row.produto)))];
+  const semana = { inicio: result.periodo[0], fim: result.periodo[3], produtos };
+  let todas = [];
+  try {
+    todas = JSON.parse(localStorage.getItem(SEMANAS_KEY) || "[]");
+    if (!Array.isArray(todas)) todas = [];
+  } catch {
+    todas = [];
+  }
+  todas = todas.filter((item) => item && item.inicio !== semana.inicio);
+  todas.push(semana);
+  todas.sort((a, b) => diaNumero(a.inicio) - diaNumero(b.inicio));
+  todas = todas.slice(-4);
+  localStorage.setItem(SEMANAS_KEY, JSON.stringify(todas));
+  state.semanas = todas;
+}
+
+function repeticaoOferta(result) {
+  const atuais = new Set(result.details.map((row) => String(row.produto)));
+  const anteriores = state.semanas.filter((item) => item.inicio !== result.periodo[0]);
+  const anterior = anteriores.length ? anteriores[anteriores.length - 1] : null;
+  const conjuntoAnterior = new Set(anterior ? anterior.produtos.map(String) : []);
+  const conjuntos = anteriores.map((item) => new Set(item.produtos.map(String)));
+  const vezes = new Map();
+  const naAnterior = new Map();
+  for (const produto of atuais) {
+    vezes.set(produto, conjuntos.reduce((total, conjunto) => total + (conjunto.has(produto) ? 1 : 0), 0));
+    naAnterior.set(produto, conjuntoAnterior.has(produto));
+  }
+  return { anteriores, anterior, vezes, naAnterior, total: atuais.size };
+}
+
+function combinaRepeticao(id, vezes, naAnterior) {
+  if (id === "anterior") return naAnterior;
+  if (id === "estreia") return !naAnterior;
+  if (id === "2+") return vezes >= 2;
+  return vezes === Number(id);
 }
 function setProgress(ratio, text) {
   bar.style.width = `${Math.round(ratio * 100)}%`;
@@ -166,6 +223,11 @@ async function run(loader) {
     }
     state.result = result;
     state.page = 0;
+    if (state.view === "detalhe") {
+      state.view = "capa";
+      state.repeticao = "";
+    }
+    guardarSemana(result);
     setProgress(1, `Semana ${result.periodo[0]} a ${result.periodo[3]}. ${result.quality.produtosOferta.toLocaleString("pt-BR")} produtos de oferta.`);
     render();
   } catch (error) {
@@ -179,6 +241,7 @@ function currentRows() {
   let rows = result.details;
   if (state.loja) rows = rows.filter((row) => row.loja === state.loja);
   if (state.comprador) rows = rows.filter((row) => row.comprador === state.comprador);
+  if (state.produto) rows = rows.filter((row) => row.produto === state.produto);
   if (state.texto) {
     const query = state.texto.toLocaleLowerCase("pt-BR");
     rows = rows.filter((row) => `${row.produto} ${row.descricao}`.toLocaleLowerCase("pt-BR").includes(query));
@@ -202,6 +265,7 @@ function currentRows() {
   if (state.view === "detalhe") {
     if (state.grupo === "automatico") rows = rows.filter((row) => row.automatico);
     if (state.grupo === "manual") rows = rows.filter((row) => row.manual);
+    if (state.grupo === "ambos") rows = rows.filter((row) => row.automatico && row.manual);
     if (state.grupo === "provavel") rows = rows.filter((row) => row.provavel);
     if (state.grupo === "ruptura") rows = rows.filter((row) => row.situacao === "zero");
     if (state.grupo === "excesso") rows = rows.filter((row) => row.irregular);
@@ -287,27 +351,96 @@ function render() {
 }
 
 const CAPA_METRICS = [
-  ["automatico", "Abastecimento automático", (row) => row.automatico / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual],
-  ["manual", "Abastecimento manual", (row) => row.manual / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual],
-  ["provavel", "Ruptura provável", (row) => row.comVenda ? row.provavel / row.comVenda : 0, (row) => row.comVenda],
-  ["ruptura", "Ruptura", (row) => row.comPosicao ? row.ruptura / row.comPosicao : 0, (row) => row.comPosicao],
-  ["excesso", "Excesso de estoque", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares],
-  ["sem-venda", "Sem venda com saldo", (row) => row.pares ? row.semVendaSaldo / row.pares : 0, (row) => row.pares],
-  ["sem-entrada", "Sem entrada", (row) => row.pares ? row.excecaoSem / row.pares : 0, (row) => row.pares],
+  ["automatico", "Abastecimento automático", (row) => row.automatico / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.automatico],
+  ["manual", "Abastecimento manual", (row) => row.manual / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.manual],
+  ["ambos", "Dois abastecimentos", (row) => row.comAbastecimento ? row.ambos / row.comAbastecimento : 0, (row) => row.comAbastecimento, (row) => row.ambos],
+  ["provavel", "Ruptura provável", (row) => row.comVenda ? row.provavel / row.comVenda : 0, (row) => row.comVenda, (row) => row.provavel],
+  ["ruptura", "Ruptura", (row) => row.comPosicao ? row.ruptura / row.comPosicao : 0, (row) => row.comPosicao, (row) => row.ruptura],
+  ["excesso", "Excesso de estoque", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares, (row) => row.irregular],
+  ["sem-venda", "Sem venda com saldo", (row) => row.pares ? row.semVendaSaldo / row.pares : 0, (row) => row.pares, (row) => row.semVendaSaldo],
+  ["sem-entrada", "Sem entrada", (row) => row.pares ? row.excecaoSem / row.pares : 0, (row) => row.pares, (row) => row.excecaoSem],
 ];
+
+function productRows(details) {
+  const map = new Map();
+  for (const row of details) {
+    let item = map.get(row.produto);
+    if (!item) {
+      item = {
+        produto: row.produto,
+        descricao: row.descricao,
+        comprador: row.comprador,
+        pares: 0,
+        comVenda: 0,
+        comPosicao: 0,
+        automatico: 0,
+        manual: 0,
+        ambos: 0,
+        comAbastecimento: 0,
+        provavel: 0,
+        ruptura: 0,
+        irregular: 0,
+        semVendaSaldo: 0,
+        excecaoSem: 0,
+      };
+      map.set(row.produto, item);
+    }
+    item.pares += 1;
+    if (row.vendeu) item.comVenda += 1;
+    if (row.final != null) item.comPosicao += 1;
+    if (row.automatico) item.automatico += 1;
+    if (row.manual) item.manual += 1;
+    if (row.automatico || row.manual) item.comAbastecimento += 1;
+    if (row.automatico && row.manual) item.ambos += 1;
+    if (row.provavel) item.provavel += 1;
+    if (row.situacao === "zero") item.ruptura += 1;
+    if (row.irregular) item.irregular += 1;
+    if (!row.vendeu && row.situacao === "positivo") item.semVendaSaldo += 1;
+    if (row.excecao === "sem-entrada") item.excecaoSem += 1;
+  }
+  return [...map.values()].sort((a, b) => a.descricao.localeCompare(b.descricao, "pt-BR"));
+}
 
 function renderCapa(result) {
   const rede = result.rede;
-  const people = state.foco === "loja" ? result.lojas : result.compradores.filter((row) => row.pares > 0);
-  const cards = people.map((row) => {
-    const name = row.nome || row.comprador;
-    const metrics = CAPA_METRICS.map(([id, label, ratio, base]) => {
-      const total = base(row);
-      if (!total && (id === "automatico" || id === "manual")) return "";
-      return `<button type="button" class="metric" data-metric="${id}" data-nome="${name.replace(/"/g, "&quot;")}" data-loja="${row.id || ""}" data-comprador="${row.comprador || ""}"><span>${label}</span><strong>${total ? pct(ratio(row)) : "—"}</strong></button>`;
+  const label = state.foco === "loja" ? "Loja" : state.foco === "produto" ? "Produto" : "Comprador";
+  let people = state.foco === "loja"
+    ? result.lojas
+    : state.foco === "produto"
+      ? productRows(result.details)
+      : result.compradores.filter((row) => row.pares > 0);
+  if (state.foco === "produto" && state.busca) {
+    const query = state.busca.toLocaleLowerCase("pt-BR");
+    people = people.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
+  }
+  const start = state.page * state.pageSize;
+  const pageRows = people.slice(start, start + state.pageSize);
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const info = repeticaoOferta(result);
+  const mostraVezes = state.foco === "produto" && info.anteriores.length > 0;
+  const head = `${mostraVezes ? `<th class="num">Vezes antes</th>` : ""}${CAPA_METRICS.map(([, name]) => `<th class="num">${name}</th>`).join("")}`;
+  const body = pageRows.map((row) => {
+    const name = state.foco === "produto" ? `${row.produto} ${row.descricao}` : (row.nome || row.comprador);
+    const safe = esc(name);
+    const cells = CAPA_METRICS.map(([id, , ratio, base, count]) => {
+      const recebidos = state.foco === "produto" && (id === "automatico" || id === "manual" || id === "ambos");
+      const total = recebidos ? row.comAbastecimento : base(row);
+      const value = recebidos
+        ? (id === "automatico" ? row.automatico : id === "manual" ? row.manual : row.ambos) / (row.comAbastecimento || 1)
+        : ratio(row);
+      const text = total ? pct(value) : "—";
+      const quantidade = total ? `<small>${itens(count(row))}</small>` : "";
+      return `<td class="num"><button type="button" class="metric" data-metric="${id}" data-nome="${safe}" data-loja="${row.id || ""}" data-comprador="${row.comprador || ""}" data-produto="${row.produto || ""}"><span>${text}</span>${quantidade}</button></td>`;
     }).join("");
-    return `<article class="person"><h2>${name}</h2>${metrics}</article>`;
+    const who = state.foco === "produto" ? `<strong>${esc(row.produto)}</strong> ${esc(row.descricao)}` : esc(name);
+    const vezes = mostraVezes ? `<td class="num">${info.vezes.get(String(row.produto)) || 0}</td>` : "";
+    return `<tr><td>${who}</td>${vezes}${cells}</tr>`;
   }).join("");
+  const repeticao = htmlRepeticao(result, info, esc);
+  const pages = Math.max(1, Math.ceil(people.length / state.pageSize));
+  const search = state.foco === "produto"
+    ? `<div class="filters"><input id="f-busca" placeholder="Produto ou comprador" value="${esc(state.busca)}"></div>`
+    : "";
   view.innerHTML = `
     <div class="cards">
       <article class="card"><span>Venda da oferta</span><strong>${money(rede.venda)}</strong></article>
@@ -317,45 +450,154 @@ function renderCapa(result) {
       <article class="card"><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
       <article class="card"><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
+    ${repeticao}
     <div class="switch">
       <button type="button" class="${state.foco === "comprador" ? "" : "secondary"}" data-foco="comprador">Por comprador</button>
       <button type="button" class="${state.foco === "loja" ? "" : "secondary"}" data-foco="loja">Por loja</button>
+      <button type="button" class="${state.foco === "produto" ? "" : "secondary"}" data-foco="produto">Por produto</button>
     </div>
-    <div class="people">${cards}</div>
-    <p class="note">Os percentuais são da oferta. Automático e manual usam as linhas de revenda. O clique abre os produtos daquele percentual.</p>`;
+    ${search}
+    <div class="table-wrap"><table class="capa-table"><thead><tr><th>${label}</th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${CAPA_METRICS.length + 1 + (mostraVezes ? 1 : 0)}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
+    <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
+    <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos.</p>`;
   view.querySelectorAll("[data-foco]").forEach((button) => {
-    button.onclick = () => { state.foco = button.dataset.foco; render(); };
+    button.onclick = () => { state.foco = button.dataset.foco; state.page = 0; render(); };
   });
+  const busca = document.querySelector("#f-busca");
+  if (busca) {
+    busca.oninput = () => {
+      state.busca = busca.value;
+      state.page = 0;
+      const caret = busca.selectionStart;
+      render();
+      const again = document.querySelector("#f-busca");
+      if (again) {
+        again.focus();
+        again.setSelectionRange(caret, caret);
+      }
+    };
+  }
+  const prev = document.querySelector("#prev");
+  const next = document.querySelector("#next");
+  if (prev) prev.onclick = () => { state.page = Math.max(0, state.page - 1); render(); };
+  if (next) next.onclick = () => { state.page = Math.min(pages - 1, state.page + 1); render(); };
   view.querySelectorAll(".metric").forEach((button) => {
     button.onclick = () => {
       state.view = "detalhe";
       state.grupo = button.dataset.metric;
       state.page = 0;
       state.texto = "";
-      if (state.foco === "loja") {
-        state.loja = button.dataset.loja;
-        state.comprador = "";
-      } else {
-        state.comprador = button.dataset.comprador;
-        state.loja = "";
-      }
+      state.loja = "";
+      state.comprador = "";
+      state.produto = "";
+      if (state.foco === "loja") state.loja = button.dataset.loja;
+      else if (state.foco === "comprador") state.comprador = button.dataset.comprador;
+      else state.produto = button.dataset.produto;
       const metric = CAPA_METRICS.find(([id]) => id === state.grupo);
       state.detalheTitulo = `${button.dataset.nome} · ${metric[1]}`;
+      state.repeticao = "";
+      render();
+    };
+  });
+  view.querySelectorAll(".repeat").forEach((button) => {
+    button.onclick = () => {
+      state.view = "detalhe";
+      state.grupo = "repeticao";
+      state.repeticao = button.dataset.repeticao;
+      state.detalheTitulo = button.dataset.rotulo;
+      state.page = 0;
+      state.texto = "";
+      state.loja = "";
+      state.comprador = "";
+      state.produto = "";
       render();
     };
   });
 }
 
+function htmlRepeticao(result, info, esc) {
+  const guardadas = state.semanas.map((item) => `${diaCurto(item.inicio)} a ${diaCurto(item.fim)}`).join(" · ");
+  if (!info.anteriores.length) {
+    return `<p class="note">Esta semana ficou guardada (${diaCurto(result.periodo[0])} a ${diaCurto(result.periodo[3])}). A comparação aparece quando outra semana for atualizada. Ficam sempre as quatro últimas.</p>`;
+  }
+  const n = info.anteriores.length;
+  const contar = (pred) => {
+    let total = 0;
+    for (const produto of info.vezes.keys()) {
+      if (pred(info.vezes.get(produto), info.naAnterior.get(produto))) total += 1;
+    }
+    return total;
+  };
+  const blocos = [
+    ["anterior", `Também na semana ${diaCurto(info.anterior.inicio)} a ${diaCurto(info.anterior.fim)}`, (vezes, na) => na],
+    ["estreia", "Não estiveram na semana anterior", (vezes, na) => !na],
+  ];
+  if (n >= 2) {
+    blocos.push(["0", "Não estiveram em nenhuma semana anterior", (vezes) => vezes === 0]);
+    blocos.push(["1", "Estiveram em 1 semana anterior", (vezes) => vezes === 1]);
+    blocos.push(["2", n === 2 ? "Estiveram nas 2 semanas anteriores" : "Estiveram em 2 semanas anteriores", (vezes) => vezes === 2]);
+  }
+  if (n >= 3) {
+    blocos.push(["3", "Estiveram nas 3 semanas anteriores", (vezes) => vezes === 3]);
+    blocos.push(["2+", "Em pelo menos 2 semanas anteriores", (vezes) => vezes >= 2]);
+  }
+  const cards = blocos.map(([id, rotulo, pred]) => {
+    const quantidade = contar(pred);
+    const ratio = info.total ? quantidade / info.total : 0;
+    return `<button type="button" class="card repeat" data-repeticao="${id}" data-rotulo="${esc(rotulo)}"><span>${esc(rotulo)}</span><strong>${pct(ratio)}</strong><em class="itens">${itens(quantidade)}</em></button>`;
+  }).join("");
+  const aviso = n >= 3 ? " Em pelo menos 2 semanas inclui quem esteve em 2 e em 3." : "";
+  return `<h2 class="section">Repetição da oferta</h2><div class="cards">${cards}</div><p class="note">Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>`;
+}
+
 function renderDetalhe() {
+  if (state.grupo === "repeticao") {
+    renderRepeticao();
+    return;
+  }
   const rows = currentRows();
   view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button></div>${filters()}${table(detailColumns(), rows)}`;
-  document.querySelector("#voltar").onclick = () => {
-    state.view = "capa";
-    state.loja = "";
-    state.comprador = "";
-    state.page = 0;
-    render();
-  };
+  document.querySelector("#voltar").onclick = voltarCapa;
+  bindFilters(rows);
+}
+
+function voltarCapa() {
+  state.view = "capa";
+  state.loja = "";
+  state.comprador = "";
+  state.produto = "";
+  state.repeticao = "";
+  state.page = 0;
+  render();
+}
+
+function renderRepeticao() {
+  const info = repeticaoOferta(state.result);
+  const seen = new Set();
+  let rows = [];
+  for (const row of state.result.details) {
+    const produto = String(row.produto);
+    if (seen.has(produto)) continue;
+    seen.add(produto);
+    const vezes = info.vezes.get(produto) || 0;
+    const na = Boolean(info.naAnterior.get(produto));
+    if (!combinaRepeticao(state.repeticao, vezes, na)) continue;
+    rows.push({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, vezes, na });
+  }
+  rows.sort((a, b) => b.vezes - a.vezes || a.descricao.localeCompare(b.descricao, "pt-BR"));
+  if (state.texto) {
+    const query = state.texto.toLocaleLowerCase("pt-BR");
+    rows = rows.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
+  }
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
+    { label: "Produto", cell: (row) => row.produto },
+    { label: "Descrição", cell: (row) => row.descricao },
+    { label: "Comprador", cell: (row) => row.comprador },
+    { label: "Semanas anteriores", num: true, cell: (row) => itens(row.vezes) },
+    { label: "Semana anterior", cell: (row) => row.na ? "Sim" : "Não" },
+  ], rows)}`;
+  document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
 
@@ -479,6 +721,8 @@ nav.onclick = (event) => {
   state.page = 0;
   state.loja = "";
   state.comprador = "";
+  state.produto = "";
+  state.repeticao = "";
   state.detalheTitulo = "";
   if (state.view === "sem-venda") state.grupo = "positivo";
   if (state.view === "ruptura") state.grupo = "zero";
