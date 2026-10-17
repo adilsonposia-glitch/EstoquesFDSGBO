@@ -23,6 +23,8 @@ const state = {
   loja: "",
   comprador: "",
   produto: "",
+  departamento: "",
+  secao: "",
   busca: "",
   texto: "",
   grupo: "zero",
@@ -81,7 +83,7 @@ function capaOrdem(row, info) {
   const metric = CAPA_METRICS.find(([id]) => id === state.sortKey);
   if (!metric) return null;
   const [, , ratio, base] = metric;
-  const recebidos = state.foco === "produto" && (state.sortKey === "automatico" || state.sortKey === "manual" || state.sortKey === "ambos");
+  const recebidos = (state.foco === "produto" || state.foco === "departamento" || state.foco === "secao") && (state.sortKey === "automatico" || state.sortKey === "manual" || state.sortKey === "ambos");
   const total = recebidos ? row.comAbastecimento : base(row);
   if (!total) return null;
   if (!recebidos) return ratio(row);
@@ -278,6 +280,8 @@ function currentRows() {
   if (state.loja) rows = rows.filter((row) => row.loja === state.loja);
   if (state.comprador) rows = rows.filter((row) => row.comprador === state.comprador);
   if (state.produto) rows = rows.filter((row) => row.produto === state.produto);
+  if (state.departamento) rows = rows.filter((row) => row.n1 === state.departamento);
+  if (state.secao) rows = rows.filter((row) => row.n2 === state.secao);
   if (state.texto) {
     const query = state.texto.toLocaleLowerCase("pt-BR");
     rows = rows.filter((row) => `${row.produto} ${row.descricao}`.toLocaleLowerCase("pt-BR").includes(query));
@@ -307,6 +311,14 @@ function currentRows() {
     if (state.grupo === "excesso") rows = rows.filter((row) => row.irregular);
     if (state.grupo === "sem-venda") rows = rows.filter((row) => !row.vendeu && row.situacao === "positivo");
     if (state.grupo === "sem-entrada") rows = rows.filter((row) => row.excecao === "sem-entrada");
+    if (state.grupo === "com-venda") rows = rows.filter((row) => row.vendeu);
+    if (state.grupo === "sem-venda-total") rows = rows.filter((row) => !row.vendeu);
+    if (state.grupo === "so-automatico") rows = rows.filter((row) => row.automatico && !row.manual);
+    if (state.grupo === "so-manual") rows = rows.filter((row) => row.manual && !row.automatico);
+    if (state.grupo === "produto-sem-venda") {
+      const comVenda = new Set(result.details.filter((row) => row.vendeu).map((row) => row.produto));
+      rows = rows.filter((row) => !comVenda.has(row.produto));
+    }
   }
   return rows;
 }
@@ -315,10 +327,15 @@ function filters() {
   const result = state.result;
   const stores = Object.entries(LOJAS).filter(([id]) => id !== "70");
   const buyers = [...new Set(result.compradores.map((row) => row.comprador))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const departamentos = [...new Set(result.details.map((row) => row.n1).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const secoes = [...new Set(result.details.filter((row) => !state.departamento || row.n1 === state.departamento).map((row) => row.n2).filter(Boolean))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const esc = (value) => String(value).replace(/"/g, "&quot;");
   return `
     <div class="filters">
       <select id="f-loja"><option value="">Todas as lojas</option>${stores.map(([id, name]) => `<option value="${id}" ${state.loja === id ? "selected" : ""}>${name}</option>`).join("")}</select>
-      <select id="f-comprador"><option value="">Todos os compradores</option>${buyers.map((name) => `<option ${state.comprador === name ? "selected" : ""}>${name}</option>`).join("")}</select>
+      <select id="f-comprador"><option value="">Todos os compradores</option>${buyers.map((name) => `<option ${state.comprador === name ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
+      <select id="f-departamento"><option value="">Todos os departamentos</option>${departamentos.map((name) => `<option value="${esc(name)}" ${state.departamento === name ? "selected" : ""}>${name}</option>`).join("")}</select>
+      <select id="f-secao"><option value="">Todas as seções</option>${secoes.map((name) => `<option value="${esc(name)}" ${state.secao === name ? "selected" : ""}>${name}</option>`).join("")}</select>
       <input id="f-texto" placeholder="Produto" value="${state.texto.replace(/"/g, "&quot;")}">
     </div>`;
 }
@@ -346,6 +363,10 @@ function bindFilters(rows) {
   const texto = document.querySelector("#f-texto");
   if (loja) loja.onchange = () => { state.loja = loja.value; state.page = 0; render(); };
   if (comprador) comprador.onchange = () => { state.comprador = comprador.value; state.page = 0; render(); };
+  const departamento = document.querySelector("#f-departamento");
+  const secao = document.querySelector("#f-secao");
+  if (departamento) departamento.onchange = () => { state.departamento = departamento.value; state.secao = ""; state.page = 0; render(); };
+  if (secao) secao.onchange = () => { state.secao = secao.value; state.page = 0; render(); };
   if (texto) texto.onchange = () => { state.texto = texto.value; state.page = 0; render(); };
   const prev = document.querySelector("#prev");
   const next = document.querySelector("#next");
@@ -408,7 +429,8 @@ function detailColumns() {
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
     { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial) },
-    { key: "entrada", label: "Entrada", num: true, value: (row) => row.entradas, cell: (row) => qty(row.entradas) },
+    { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica) },
+    { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual) },
     { key: "venda", label: "Venda (quant)", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade) },
     { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final) },
     { key: "saldo", label: "Final / inicial", num: true, value: (row) => relacaoEstoque(row), cell: (row) => { const valor = relacaoEstoque(row); return valor == null ? "—" : pct(valor); } },
@@ -487,14 +509,88 @@ function productRows(details) {
   return [...map.values()].sort((a, b) => a.descricao.localeCompare(b.descricao, "pt-BR"));
 }
 
+function classRows(details, campo) {
+  const vazio = campo === "n1" ? "Sem departamento" : "Sem seção";
+  const map = new Map();
+  for (const row of details) {
+    const nome = row[campo] || vazio;
+    let item = map.get(nome);
+    if (!item) {
+      item = {
+        nome,
+        pares: 0,
+        comVenda: 0,
+        comPosicao: 0,
+        automatico: 0,
+        manual: 0,
+        ambos: 0,
+        comAbastecimento: 0,
+        provavel: 0,
+        ruptura: 0,
+        irregular: 0,
+        semVendaSaldo: 0,
+        excecaoSem: 0,
+      };
+      map.set(nome, item);
+    }
+    item.pares += 1;
+    if (row.vendeu) item.comVenda += 1;
+    if (row.final != null) item.comPosicao += 1;
+    if (row.automatico) item.automatico += 1;
+    if (row.manual) item.manual += 1;
+    if (row.automatico || row.manual) item.comAbastecimento += 1;
+    if (row.automatico && row.manual) item.ambos += 1;
+    if (row.provavel) item.provavel += 1;
+    if (row.situacao === "zero") item.ruptura += 1;
+    if (row.irregular) item.irregular += 1;
+    if (!row.vendeu && row.situacao === "positivo") item.semVendaSaldo += 1;
+    if (row.excecao === "sem-entrada") item.excecaoSem += 1;
+  }
+  return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+function campanha(result) {
+  const rows = result.details;
+  const contagem = (predicado) => rows.reduce((total, row) => total + (predicado(row) ? 1 : 0), 0);
+  const comVenda = new Set();
+  for (const row of rows) if (row.vendeu) comVenda.add(row.produto);
+  return [
+    ["Oferta", [
+      ["", "Produtos de oferta", result.quality.produtosOferta],
+      ["produto-sem-venda", "Sem venda em loja nenhuma", result.quality.produtosOferta - comVenda.size],
+      ["", "Pares loja e produto", rows.length],
+    ]],
+    ["Venda", [
+      ["com-venda", "Pares com venda", contagem((row) => row.vendeu)],
+      ["sem-venda-total", "Pares sem venda", contagem((row) => !row.vendeu)],
+      ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo")],
+    ]],
+    ["Estoque", [
+      ["excesso", "Excesso de estoque", contagem((row) => row.irregular)],
+      ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero")],
+      ["provavel", "Ruptura provável", contagem((row) => row.provavel)],
+      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada")],
+    ]],
+    ["Abastecimento", [
+      ["ambos", "Duas modalidades", contagem((row) => row.automatico && row.manual)],
+      ["so-automatico", "Só automático", contagem((row) => row.automatico && !row.manual)],
+      ["so-manual", "Só manual", contagem((row) => row.manual && !row.automatico)],
+    ]],
+  ];
+}
+
 function renderCapa(result) {
   const rede = result.rede;
-  const label = state.foco === "loja" ? "Loja" : state.foco === "produto" ? "Produto" : "Comprador";
+  const label = state.foco === "loja" ? "Loja" : state.foco === "produto" ? "Produto" : state.foco === "departamento" ? "Departamento" : state.foco === "secao" ? "Seção" : "Comprador";
   let people = state.foco === "loja"
     ? result.lojas
     : state.foco === "produto"
       ? productRows(result.details)
-      : result.compradores.filter((row) => row.pares > 0);
+      : state.foco === "departamento"
+        ? classRows(result.details, "n1")
+        : state.foco === "secao"
+          ? classRows(result.details, "n2")
+          : result.compradores.filter((row) => row.pares > 0);
   if (state.foco === "produto" && state.busca) {
     const query = state.busca.toLocaleLowerCase("pt-BR");
     people = people.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
@@ -525,7 +621,7 @@ function renderCapa(result) {
     const name = state.foco === "produto" ? `${row.produto} ${row.descricao}` : (row.nome || row.comprador);
     const safe = esc(name);
     const cells = CAPA_METRICS.map(([id, , ratio, base, count]) => {
-      const recebidos = state.foco === "produto" && (id === "automatico" || id === "manual" || id === "ambos");
+      const recebidos = (state.foco === "produto" || state.foco === "departamento" || state.foco === "secao") && (id === "automatico" || id === "manual" || id === "ambos");
       const total = recebidos ? row.comAbastecimento : base(row);
       const value = recebidos
         ? (id === "automatico" ? row.automatico : id === "manual" ? row.manual : row.ambos) / (row.comAbastecimento || 1)
@@ -552,11 +648,14 @@ function renderCapa(result) {
       <article class="card" title="Lucro bruto soma VLRLUCRO dos itens de oferta que venderam. Esse valor já vem pronto no arquivo de vendas."><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
       <article class="card" title="Margem pelo custo bruto é a venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto."><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
+    <div class="campanha-grade">${campanha(result).map(([titulo, linhas]) => `<article class="card campanha-col"><span>${titulo}</span>${linhas.map(([id, nome, quantidade]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : "disabled"}><em>${nome}</em><strong>${itens(quantidade)}</strong></button>`).join("")}</article>`).join("")}</div>
     ${repeticao}
     <div class="switch">
       <button type="button" class="${state.foco === "comprador" ? "" : "secondary"}" data-foco="comprador">Por comprador</button>
       <button type="button" class="${state.foco === "loja" ? "" : "secondary"}" data-foco="loja">Por loja</button>
       <button type="button" class="${state.foco === "produto" ? "" : "secondary"}" data-foco="produto">Por produto</button>
+      <button type="button" class="${state.foco === "departamento" ? "" : "secondary"}" data-foco="departamento">Por departamento</button>
+      <button type="button" class="${state.foco === "secao" ? "" : "secondary"}" data-foco="secao">Por seção</button>
     </div>
     ${search}
     <div class="panel" id="panel">
@@ -595,8 +694,12 @@ function renderCapa(result) {
       state.loja = "";
       state.comprador = "";
       state.produto = "";
+      state.departamento = "";
+      state.secao = "";
       if (state.foco === "loja") state.loja = button.dataset.loja;
       else if (state.foco === "comprador") state.comprador = button.dataset.comprador;
+      else if (state.foco === "departamento") state.departamento = button.dataset.nome;
+      else if (state.foco === "secao") state.secao = button.dataset.nome;
       else state.produto = button.dataset.produto;
       const metric = CAPA_METRICS.find(([id]) => id === state.grupo);
       state.detalheTitulo = `${button.dataset.nome} · ${metric[1]}`;
@@ -619,6 +722,23 @@ function renderCapa(result) {
       render();
     };
   });
+  view.querySelectorAll("[data-campanha]").forEach((button) => {
+    button.onclick = () => {
+      state.view = "detalhe";
+      state.grupo = button.dataset.campanha;
+      state.detalheTitulo = button.dataset.rotulo;
+      state.repeticao = "";
+      state.page = 0;
+      state.texto = "";
+      state.loja = "";
+      state.comprador = "";
+      state.produto = "";
+      state.departamento = "";
+      state.secao = "";
+      state.sortKey = "";
+      render();
+    };
+  });
   bindSort();
   bindFullscreen();
 }
@@ -626,7 +746,7 @@ function renderCapa(result) {
 function htmlRepeticao(result, info, esc) {
   const guardadas = state.semanas.map((item) => `${diaCurto(item.inicio)} a ${diaCurto(item.fim)}`).join(" · ");
   if (!info.anteriores.length) {
-    return `<p class="note">Esta semana ficou guardada (${diaCurto(result.periodo[0])} a ${diaCurto(result.periodo[3])}). A comparação aparece quando outra semana for atualizada. Ficam sempre as quatro últimas.</p>`;
+    return `<h2 class="section">Itens que repetem</h2><p class="note">A lista dos produtos que já estiveram em oferta abre nesta área, no clique de cada percentual, quando a próxima semana for atualizada. Ficam guardadas as quatro últimas. A semana nova entra na pasta do projeto, no lugar dos arquivos atuais, ou em outra pasta pelo botão Escolher pasta. A pasta lida precisa ter só os quatro dias dessa semana, de quinta a domingo.</p>`;
   }
   const n = info.anteriores.length;
   const contar = (pred) => {
@@ -655,7 +775,7 @@ function htmlRepeticao(result, info, esc) {
     return `<button type="button" class="card repeat" data-repeticao="${id}" data-rotulo="${esc(rotulo)}"><span>${esc(rotulo)}</span><strong>${pct(ratio)}</strong><em class="itens">${itens(quantidade)}</em></button>`;
   }).join("");
   const aviso = n >= 3 ? " Em pelo menos 2 semanas inclui quem esteve em 2 e em 3." : "";
-  return `<h2 class="section">Repetição da oferta</h2><div class="cards">${cards}</div><p class="note">Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>`;
+  return `<h2 class="section">Itens que repetem</h2><div class="cards">${cards}</div><p class="note">O clique abre os produtos dessa faixa. Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>`;
 }
 
 function renderDetalhe() {
@@ -674,6 +794,8 @@ function voltarCapa() {
   state.loja = "";
   state.comprador = "";
   state.produto = "";
+  state.departamento = "";
+  state.secao = "";
   state.repeticao = "";
   state.page = 0;
   render();
@@ -750,6 +872,8 @@ function renderDatas(result) {
   const rows = result.datas.filter((row) => {
     if (state.loja && row.loja !== state.loja) return false;
     if (state.comprador && row.comprador !== state.comprador) return false;
+    if (state.departamento && row.n1 !== state.departamento) return false;
+    if (state.secao && row.n2 !== state.secao) return false;
     return true;
   });
   const label = { antes: "Manual em dia anterior", depois: "Manual em dia posterior", "mesmo-dia-antes": "Mesmo dia, manual antes", "mesmo-dia-depois": "Mesmo dia, manual depois", misto: "Pedidos dos dois lados" };
@@ -830,6 +954,8 @@ nav.onclick = (event) => {
   state.loja = "";
   state.comprador = "";
   state.produto = "";
+  state.departamento = "";
+  state.secao = "";
   state.repeticao = "";
   state.sortKey = "";
   state.detalheTitulo = "";

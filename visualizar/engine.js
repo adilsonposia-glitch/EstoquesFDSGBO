@@ -403,6 +403,7 @@ function analyze(input) {
         descricao: info.descricao,
         comprador: info.comprador,
         n1: info.n1,
+        n2: info.n2,
         venda: vv,
         lucro,
         margem,
@@ -479,9 +480,16 @@ function analyze(input) {
 
       if (kind !== "automatico" && kind !== "manual") continue;
       const key = `${parts[0]}|${product}`;
-      if (!modos.has(key)) modos.set(key, { automatico: false, manual: false });
-      if (kind === "automatico") modos.get(key).automatico = true;
-      if (kind === "manual") modos.get(key).manual = true;
+      if (!modos.has(key)) modos.set(key, { automatico: false, manual: false, qtdAutomatica: 0, qtdManual: 0 });
+      const modo = modos.get(key);
+      const recebida = num(parts[18]);
+      if (kind === "automatico") {
+        modo.qtdAutomatica += recebida;
+        if (recebida > EPS) modo.automatico = true;
+      } else {
+        modo.qtdManual += recebida;
+        if (recebida > EPS) modo.manual = true;
+      }
       if (!grupos.has(key)) grupos.set(key, { aut: "", man: [], loja: parts[0], produto: product });
       const group = grupos.get(key);
       const when = stamp(parts[22]);
@@ -509,6 +517,8 @@ function analyze(input) {
       produto: group.produto,
       descricao: info.descricao,
       comprador: info.comprador,
+      n1: info.n1 || "",
+      n2: info.n2 || "",
       relacao,
       automatico: group.aut,
       manuais: group.man.length,
@@ -519,6 +529,8 @@ function analyze(input) {
     const modo = modos.get(`${row.loja}|${row.produto}`);
     row.automatico = Boolean(modo?.automatico);
     row.manual = Boolean(modo?.manual);
+    row.entradaAutomatica = modo?.qtdAutomatica || 0;
+    row.entradaManual = modo?.qtdManual || 0;
     if (!row.automatico && !row.manual) continue;
     const buyer = ensureBuyer(row.comprador);
     const storeRow = ensureStore(row.loja);
