@@ -30,6 +30,8 @@ const state = {
   files: null,
   semanas: [],
   repeticao: "",
+  sortKey: "",
+  sortDir: "asc",
 };
 
 const nav = document.querySelector("#nav");
@@ -51,6 +53,40 @@ function qty(value) {
 }
 function itens(value) {
   return Math.round(value || 0).toLocaleString("pt-BR");
+}
+function relacaoEstoque(row) {
+  if (row.inicial == null || row.final == null || Math.abs(row.inicial) < 0.05) return null;
+  return row.final / row.inicial;
+}
+function compareValues(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  const dir = state.sortDir === "desc" ? -1 : 1;
+  if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
+  return String(a).localeCompare(String(b), "pt-BR", { numeric: true, sensitivity: "base" }) * dir;
+}
+function sortRows(rows, columns) {
+  const column = columns.find((item) => item.key === state.sortKey);
+  if (!column || !column.value) return rows;
+  return [...rows].sort((a, b) => compareValues(column.value(a), column.value(b)));
+}
+function sortMark(key) {
+  if (state.sortKey !== key) return "";
+  return state.sortDir === "asc" ? " ↑" : " ↓";
+}
+function capaOrdem(row, info) {
+  if (state.sortKey === "nome") return row.nome || row.comprador || `${row.produto} ${row.descricao}`;
+  if (state.sortKey === "vezes") return info.vezes.get(String(row.produto)) || 0;
+  const metric = CAPA_METRICS.find(([id]) => id === state.sortKey);
+  if (!metric) return null;
+  const [, , ratio, base] = metric;
+  const recebidos = state.foco === "produto" && (state.sortKey === "automatico" || state.sortKey === "manual" || state.sortKey === "ambos");
+  const total = recebidos ? row.comAbastecimento : base(row);
+  if (!total) return null;
+  if (!recebidos) return ratio(row);
+  const numero = state.sortKey === "automatico" ? row.automatico : state.sortKey === "manual" ? row.manual : row.ambos;
+  return numero / row.comAbastecimento;
 }
 function diaNumero(text) {
   const [dia, mes, ano] = String(text).split("-").map(Number);
@@ -288,15 +324,20 @@ function filters() {
 }
 
 function table(columns, rows) {
+  const sorted = sortRows(rows, columns);
   const start = state.page * state.pageSize;
-  const pageRows = rows.slice(start, start + state.pageSize);
-  const head = columns.map((column) => `<th class="${column.num ? "num" : ""}">${column.label}</th>`).join("");
+  const pageRows = sorted.slice(start, start + state.pageSize);
+  const head = columns.map((column) => `<th class="${column.num ? "num" : ""}"><button type="button" class="sort" data-sort="${column.key}">${column.label}${sortMark(column.key)}</button></th>`).join("");
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const body = pageRows.map((row) => `<tr>${columns.map((column) => `<td class="${column.num ? "num" : ""}">${esc(column.cell(row))}</td>`).join("")}</tr>`).join("");
-  const pages = Math.max(1, Math.ceil(rows.length / state.pageSize));
+  const pages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
+  const fullLabel = document.fullscreenElement ? "Sair da tela cheia" : "Tela cheia";
   return `
-    <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
-    <div class="pager"><span>${rows.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>`;
+    <div class="panel" id="panel">
+      <div class="panel-bar"><button type="button" id="fullscreen">${fullLabel}</button></div>
+      <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
+      <div class="pager"><span>${sorted.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
+    </div>`;
 }
 
 function bindFilters(rows) {
@@ -314,24 +355,69 @@ function bindFilters(rows) {
   document.querySelectorAll("[data-grupo]").forEach((button) => {
     button.onclick = () => { state.grupo = button.dataset.grupo; state.page = 0; render(); };
   });
+  bindSort();
+  bindFullscreen();
+}
+
+function bindSort() {
+  document.querySelectorAll("[data-sort]").forEach((button) => {
+    button.onclick = () => {
+      const key = button.dataset.sort;
+      if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+      else {
+        state.sortKey = key;
+        state.sortDir = key === "nome" || key === "loja" || key === "produto" || key === "descricao" || key === "comprador" || key === "relacao" ? "asc" : "desc";
+      }
+      state.page = 0;
+      render();
+    };
+  });
+}
+
+function bindFullscreen() {
+  const panel = document.querySelector("#panel");
+  const button = document.querySelector("#fullscreen");
+  if (!panel || !button) return;
+  const wrap = panel.querySelector(".table-wrap");
+  const overflows = wrap && wrap.scrollWidth > wrap.clientWidth + 4;
+  const leave = () => {
+    panel.classList.remove("expanded");
+    button.textContent = "Tela cheia";
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  };
+  const enter = () => {
+    panel.requestFullscreen().then(() => {
+      button.textContent = "Sair da tela cheia";
+    }).catch(() => {
+      panel.classList.add("expanded");
+      button.textContent = "Sair da tela cheia";
+    });
+  };
+  button.hidden = !overflows && !state.keepFull;
+  button.onclick = () => {
+    if (document.fullscreenElement || panel.classList.contains("expanded")) leave();
+    else enter();
+  };
+  if (state.keepFull) enter();
 }
 
 function detailColumns() {
   return [
-    { label: "Loja", cell: (row) => row.lojaNome },
-    { label: "Produto", cell: (row) => row.produto },
-    { label: "Descrição", cell: (row) => row.descricao },
-    { label: "Comprador", cell: (row) => row.comprador },
-    { label: "Venda", num: true, cell: (row) => money(row.venda) },
-    { label: "Qtd", num: true, cell: (row) => qty(row.quantidade) },
-    { label: "Inicial", num: true, cell: (row) => qty(row.inicial) },
-    { label: "Entradas", num: true, cell: (row) => qty(row.entradas) },
-    { label: "Final", num: true, cell: (row) => qty(row.final) },
-    { label: "Cobertura", num: true, cell: (row) => row.cobertura == null ? "—" : `${qty(row.cobertura)} d` },
+    { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
+    { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+    { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+    { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial) },
+    { key: "entrada", label: "Entrada", num: true, value: (row) => row.entradas, cell: (row) => qty(row.entradas) },
+    { key: "venda", label: "Venda (quant)", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade) },
+    { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final) },
+    { key: "saldo", label: "Final / inicial", num: true, value: (row) => relacaoEstoque(row), cell: (row) => { const valor = relacaoEstoque(row); return valor == null ? "—" : pct(valor); } },
+    { key: "cobertura", label: "Cobertura", num: true, value: (row) => row.cobertura, cell: (row) => row.cobertura == null ? "—" : `${qty(row.cobertura)} d` },
   ];
 }
 
 function render() {
+  state.keepFull = Boolean(document.fullscreenElement) || Boolean(document.querySelector("#panel.expanded"));
   title.textContent = state.view === "detalhe" ? state.detalheTitulo : VIEWS.find(([id]) => id === state.view)[1];
   [...nav.children].forEach((button) => button.classList.toggle("active", button.dataset.view === state.view));
   const result = state.result;
@@ -351,9 +437,9 @@ function render() {
 }
 
 const CAPA_METRICS = [
-  ["automatico", "Abastecimento automático", (row) => row.automatico / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.automatico],
-  ["manual", "Abastecimento manual", (row) => row.manual / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.manual],
-  ["ambos", "Dois abastecimentos", (row) => row.comAbastecimento ? row.ambos / row.comAbastecimento : 0, (row) => row.comAbastecimento, (row) => row.ambos],
+  ["automatico", "Abas. automático", (row) => row.automatico / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.automatico],
+  ["manual", "Abas. manual", (row) => row.manual / ((row.automatico + row.manual) || 1), (row) => row.automatico + row.manual, (row) => row.manual],
+  ["ambos", "Dois abas.", (row) => row.comAbastecimento ? row.ambos / row.comAbastecimento : 0, (row) => row.comAbastecimento, (row) => row.ambos],
   ["provavel", "Ruptura provável", (row) => row.comVenda ? row.provavel / row.comVenda : 0, (row) => row.comVenda, (row) => row.provavel],
   ["ruptura", "Ruptura", (row) => row.comPosicao ? row.ruptura / row.comPosicao : 0, (row) => row.comPosicao, (row) => row.ruptura],
   ["excesso", "Excesso de estoque", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares, (row) => row.irregular],
@@ -413,12 +499,28 @@ function renderCapa(result) {
     const query = state.busca.toLocaleLowerCase("pt-BR");
     people = people.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
   }
-  const start = state.page * state.pageSize;
-  const pageRows = people.slice(start, start + state.pageSize);
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const info = repeticaoOferta(result);
   const mostraVezes = state.foco === "produto" && info.anteriores.length > 0;
-  const head = `${mostraVezes ? `<th class="num">Vezes antes</th>` : ""}${CAPA_METRICS.map(([, name]) => `<th class="num">${name}</th>`).join("")}`;
+  if (state.sortKey) {
+    people = [...people].sort((a, b) => compareValues(capaOrdem(a, info), capaOrdem(b, info)));
+  }
+  const start = state.page * state.pageSize;
+  const pageRows = people.slice(start, start + state.pageSize);
+  const capaHeads = {
+    automatico: ["Abas.<br>automático", "Abastecimento automático"],
+    manual: ["Abas.<br>manual", "Abastecimento manual"],
+    ambos: ["Dois<br>abas.", "Dois abastecimentos"],
+    provavel: ["Ruptura<br>provável", "Ruptura provável"],
+    ruptura: ["Ruptura", "Ruptura"],
+    excesso: ["Excesso<br>de estoque", "Excesso de estoque"],
+    "sem-venda": ["Sem venda<br>com saldo", "Sem venda com saldo"],
+    "sem-entrada": ["Sem<br>entrada", "Sem entrada"],
+  };
+  const head = `${mostraVezes ? `<th class="num"><button type="button" class="sort" data-sort="vezes">Vezes<br>antes${sortMark("vezes")}</button></th>` : ""}${CAPA_METRICS.map(([id, name]) => {
+    const [linha, dica] = capaHeads[id] || [name, name];
+    return `<th class="num"><button type="button" class="sort" data-sort="${id}" title="${esc(dica)}">${linha}${sortMark(id)}</button></th>`;
+  }).join("")}`;
   const body = pageRows.map((row) => {
     const name = state.foco === "produto" ? `${row.produto} ${row.descricao}` : (row.nome || row.comprador);
     const safe = esc(name);
@@ -447,8 +549,8 @@ function renderCapa(result) {
       <article class="card"><span>Venda total do período</span><strong>${money(rede.total)}</strong></article>
       <article class="card"><span>Participação da oferta</span><strong>${pct(rede.participacao)}</strong></article>
       <article class="card"><span>Produtos de oferta</span><strong>${result.quality.produtosOferta.toLocaleString("pt-BR")}</strong></article>
-      <article class="card"><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
-      <article class="card"><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
+      <article class="card" title="Lucro bruto soma VLRLUCRO dos itens de oferta que venderam. Esse valor já vem pronto no arquivo de vendas."><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
+      <article class="card" title="Margem pelo custo bruto é a venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto."><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
     ${repeticao}
     <div class="switch">
@@ -457,11 +559,14 @@ function renderCapa(result) {
       <button type="button" class="${state.foco === "produto" ? "" : "secondary"}" data-foco="produto">Por produto</button>
     </div>
     ${search}
-    <div class="table-wrap"><table class="capa-table"><thead><tr><th>${label}</th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${CAPA_METRICS.length + 1 + (mostraVezes ? 1 : 0)}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
-    <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
+    <div class="panel" id="panel">
+      <div class="panel-bar"><button type="button" id="fullscreen">${document.fullscreenElement ? "Sair da tela cheia" : "Tela cheia"}</button></div>
+      <div class="table-wrap"><table class="capa-table"><thead><tr><th><button type="button" class="sort" data-sort="nome">${label}${sortMark("nome")}</button></th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${CAPA_METRICS.length + 1 + (mostraVezes ? 1 : 0)}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
+      <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
+    </div>
     <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos.</p>`;
   view.querySelectorAll("[data-foco]").forEach((button) => {
-    button.onclick = () => { state.foco = button.dataset.foco; state.page = 0; render(); };
+    button.onclick = () => { state.foco = button.dataset.foco; state.page = 0; state.sortKey = ""; render(); };
   });
   const busca = document.querySelector("#f-busca");
   if (busca) {
@@ -505,6 +610,7 @@ function renderCapa(result) {
       state.grupo = "repeticao";
       state.repeticao = button.dataset.repeticao;
       state.detalheTitulo = button.dataset.rotulo;
+      state.sortKey = "";
       state.page = 0;
       state.texto = "";
       state.loja = "";
@@ -513,6 +619,8 @@ function renderCapa(result) {
       render();
     };
   });
+  bindSort();
+  bindFullscreen();
 }
 
 function htmlRepeticao(result, info, esc) {
@@ -591,11 +699,11 @@ function renderRepeticao() {
   }
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
-    { label: "Produto", cell: (row) => row.produto },
-    { label: "Descrição", cell: (row) => row.descricao },
-    { label: "Comprador", cell: (row) => row.comprador },
-    { label: "Semanas anteriores", num: true, cell: (row) => itens(row.vezes) },
-    { label: "Semana anterior", cell: (row) => row.na ? "Sim" : "Não" },
+    { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+    { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+    { key: "vezes", label: "Semanas anteriores", num: true, value: (row) => row.vezes, cell: (row) => itens(row.vezes) },
+    { key: "anterior", label: "Semana anterior", value: (row) => row.na ? "Sim" : "Não", cell: (row) => row.na ? "Sim" : "Não" },
   ], rows)}`;
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
@@ -603,37 +711,37 @@ function renderRepeticao() {
 
 function renderLojas(result) {
   view.innerHTML = table([
-    { label: "Loja", cell: (row) => row.nome },
-    { label: "Oferta", num: true, cell: (row) => money(row.venda) },
-    { label: "Total da loja", num: true, cell: (row) => money(row.totalLoja) },
-    { label: "Participação", num: true, cell: (row) => pct(row.participacao) },
-    { label: "Lucro bruto", num: true, cell: (row) => money(row.lucro) },
-    { label: "Margem custo bruto", num: true, cell: (row) => money(row.margem) },
-    { label: "Ruptura", num: true, cell: (row) => qty(row.ruptura) },
-    { label: "Irregular", num: true, cell: (row) => qty(row.irregular) },
-    { label: "Sem venda com saldo", num: true, cell: (row) => qty(row.semVendaSaldo) },
+    { key: "loja", label: "Loja", value: (row) => row.nome, cell: (row) => row.nome },
+    { key: "oferta", label: "Oferta", num: true, value: (row) => row.venda, cell: (row) => money(row.venda) },
+    { key: "total", label: "Total da loja", num: true, value: (row) => row.totalLoja, cell: (row) => money(row.totalLoja) },
+    { key: "participacao", label: "Participação", num: true, value: (row) => row.participacao, cell: (row) => pct(row.participacao) },
+    { key: "lucro", label: "Lucro bruto", num: true, value: (row) => row.lucro, cell: (row) => money(row.lucro) },
+    { key: "margem", label: "Margem custo bruto", num: true, value: (row) => row.margem, cell: (row) => money(row.margem) },
+    { key: "ruptura", label: "Ruptura", num: true, value: (row) => row.ruptura, cell: (row) => qty(row.ruptura) },
+    { key: "irregular", label: "Irregular", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
+    { key: "sem-venda", label: "Sem venda com saldo", num: true, value: (row) => row.semVendaSaldo, cell: (row) => qty(row.semVendaSaldo) },
   ], result.lojas);
   bindFilters(result.lojas);
 }
 
 function renderBuyers(result) {
   view.innerHTML = table([
-    { label: "Comprador", cell: (row) => row.comprador },
-    { label: "Venda", num: true, cell: (row) => money(row.venda) },
-    { label: "Lucro bruto", num: true, cell: (row) => money(row.lucro) },
-    { label: "Margem custo bruto", num: true, cell: (row) => money(row.margem) },
-    { label: "Posicionado na quinta", num: true, cell: (row) => row.comPosicao ? pct(row.posicionados / row.comPosicao) : "—" },
-    { label: "Ruptura", num: true, cell: (row) => qty(row.ruptura) },
-    { label: "Ruptura provável", num: true, cell: (row) => qty(row.provavel) },
-    { label: "Irregular", num: true, cell: (row) => qty(row.irregular) },
-    { label: "Sem entrada", num: true, cell: (row) => qty(row.excecaoSem) },
-    { label: "Sem venda com saldo", num: true, cell: (row) => qty(row.semVendaSaldo) },
-    { label: "Automático", num: true, cell: (row) => qty(row.automatico) },
-    { label: "Manual", num: true, cell: (row) => qty(row.manual) },
-    { label: "% automático", num: true, cell: (row) => (row.automatico + row.manual) ? pct(row.automatico / (row.automatico + row.manual)) : "—" },
-    { label: "Embalagem", num: true, cell: (row) => qty(row.embalagem) },
-    { label: "Matéria-prima", num: true, cell: (row) => qty(row.materia) },
-    { label: "Uso e consumo", num: true, cell: (row) => qty(row.uso) },
+    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+    { key: "venda", label: "Venda", num: true, value: (row) => row.venda, cell: (row) => money(row.venda) },
+    { key: "lucro", label: "Lucro bruto", num: true, value: (row) => row.lucro, cell: (row) => money(row.lucro) },
+    { key: "margem", label: "Margem custo bruto", num: true, value: (row) => row.margem, cell: (row) => money(row.margem) },
+    { key: "posicionado", label: "Posicionado na quinta", num: true, value: (row) => row.comPosicao ? row.posicionados / row.comPosicao : null, cell: (row) => row.comPosicao ? pct(row.posicionados / row.comPosicao) : "—" },
+    { key: "ruptura", label: "Ruptura", num: true, value: (row) => row.ruptura, cell: (row) => qty(row.ruptura) },
+    { key: "provavel", label: "Ruptura provável", num: true, value: (row) => row.provavel, cell: (row) => qty(row.provavel) },
+    { key: "irregular", label: "Irregular", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
+    { key: "sem-entrada", label: "Sem entrada", num: true, value: (row) => row.excecaoSem, cell: (row) => qty(row.excecaoSem) },
+    { key: "sem-venda", label: "Sem venda com saldo", num: true, value: (row) => row.semVendaSaldo, cell: (row) => qty(row.semVendaSaldo) },
+    { key: "automatico", label: "Automático", num: true, value: (row) => row.automatico, cell: (row) => qty(row.automatico) },
+    { key: "manual", label: "Manual", num: true, value: (row) => row.manual, cell: (row) => qty(row.manual) },
+    { key: "pct-auto", label: "% automático", num: true, value: (row) => (row.automatico + row.manual) ? row.automatico / (row.automatico + row.manual) : null, cell: (row) => (row.automatico + row.manual) ? pct(row.automatico / (row.automatico + row.manual)) : "—" },
+    { key: "embalagem", label: "Embalagem", num: true, value: (row) => row.embalagem, cell: (row) => qty(row.embalagem) },
+    { key: "materia", label: "Matéria-prima", num: true, value: (row) => row.materia, cell: (row) => qty(row.materia) },
+    { key: "uso", label: "Uso e consumo", num: true, value: (row) => row.uso, cell: (row) => qty(row.uso) },
   ], result.compradores);
   bindFilters(result.compradores);
 }
@@ -646,12 +754,12 @@ function renderDatas(result) {
   });
   const label = { antes: "Manual em dia anterior", depois: "Manual em dia posterior", "mesmo-dia-antes": "Mesmo dia, manual antes", "mesmo-dia-depois": "Mesmo dia, manual depois", misto: "Pedidos dos dois lados" };
   view.innerHTML = filters() + table([
-    { label: "Loja", cell: (row) => row.lojaNome },
-    { label: "Produto", cell: (row) => row.produto },
-    { label: "Descrição", cell: (row) => row.descricao },
-    { label: "Comprador", cell: (row) => row.comprador },
-    { label: "Relação", cell: (row) => label[row.relacao] || row.relacao },
-    { label: "Pedidos manuais", num: true, cell: (row) => qty(row.manuais) },
+    { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
+    { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+    { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+    { key: "relacao", label: "Relação", value: (row) => label[row.relacao] || row.relacao, cell: (row) => label[row.relacao] || row.relacao },
+    { key: "manuais", label: "Pedidos manuais", num: true, value: (row) => row.manuais, cell: (row) => qty(row.manuais) },
   ], rows);
   bindFilters(rows);
 }
@@ -723,6 +831,7 @@ nav.onclick = (event) => {
   state.comprador = "";
   state.produto = "";
   state.repeticao = "";
+  state.sortKey = "";
   state.detalheTitulo = "";
   if (state.view === "sem-venda") state.grupo = "positivo";
   if (state.view === "ruptura") state.grupo = "zero";
