@@ -648,6 +648,7 @@ function renderCapa(result) {
       <article class="card" title="Lucro bruto soma VLRLUCRO dos itens de oferta que venderam. Esse valor já vem pronto no arquivo de vendas."><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
       <article class="card" title="Margem pelo custo bruto é a venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto."><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
+    ${htmlLancamento(result, esc)}
     <div class="campanha-grade">${campanha(result).map(([titulo, linhas]) => `<article class="card campanha-col"><span>${titulo}</span>${linhas.map(([id, nome, quantidade]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : "disabled"}><em>${nome}</em><strong>${itens(quantidade)}</strong></button>`).join("")}</article>`).join("")}</div>
     ${repeticao}
     <div class="switch">
@@ -741,6 +742,29 @@ function renderCapa(result) {
   });
   bindSort();
   bindFullscreen();
+}
+
+function htmlLancamento(result, esc) {
+  const item = result.lancamento;
+  if (!item || !result.segmentos) return "";
+  const exemplos = item.exemplos.map((row) => `<li><strong>${esc(row.nome)}</strong> em ${itens(row.codigos)} códigos</li>`).join("");
+  const linhas = result.segmentos.map((row) => `<tr><td>Segmento ${esc(row.segmento)}</td><td class="num">${itens(row.itens)}</td><td class="num">${money(row.venda)}</td><td class="num">${pct(row.participacao)}</td></tr>`).join("");
+  const somaItens = result.segmentos.reduce((total, row) => total + row.itens, 0);
+  return `<section class="leitura">
+      <article class="card leitura-nota">
+        <span>Lançamento das ofertas</span>
+        <p>O nome da oferta é texto livre. Foram digitados <strong>${itens(item.codigos)}</strong> códigos e só <strong>${itens(item.nomes)}</strong> nomes. <strong>${itens(item.nomesRepetidos)}</strong> nomes juntam códigos diferentes, e <strong>${itens(item.codigosEmVariosSegmentos)}</strong> códigos foram lançados em mais de um segmento. A performance de uma ação não se apura pelo nome.</p>
+        <ul>${exemplos}</ul>
+      </article>
+      <article class="card leitura-tabela">
+        <span>Itens e venda por segmento</span>
+        <table>
+          <thead><tr><th>Segmento</th><th class="num">Itens em oferta</th><th class="num">Valor vendido</th><th class="num">Part. %</th></tr></thead>
+          <tbody>${linhas}<tr class="total"><td>Total da oferta</td><td class="num">${itens(result.quality.produtosOferta)}</td><td class="num">${money(result.rede.venda)}</td><td class="num">${pct(1)}</td></tr></tbody>
+        </table>
+        <p class="note">Segmento é o NROSEGMENTO do arquivo de ofertas. Part. % é a venda do segmento sobre o total vendido em oferta. A soma dos itens (${itens(somaItens)}) passa de ${itens(result.quality.produtosOferta)} porque o mesmo produto entra em mais de um segmento.</p>
+      </article>
+    </section>`;
 }
 
 function htmlRepeticao(result, info, esc) {

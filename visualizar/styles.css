@@ -66,6 +66,14 @@ h1 { margin: 0 0 6px; font-size: 28px; letter-spacing: -0.03em; }
 .progress span { display: block; height: 100%; width: 0; background: var(--navy); transition: width 0.2s ease; }
 
 .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; align-items: start; }
+.leitura { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 12px; margin-bottom: 16px; align-items: start; }
+.leitura-nota p { margin: 0 0 10px; color: var(--ink, #1c2430); font-size: 14px; line-height: 1.45; }
+.leitura-nota p strong, .leitura-nota li strong { display: inline; font-size: inherit; letter-spacing: 0; font-weight: 700; color: var(--navy); }
+.leitura-nota ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.leitura-nota li { margin: 4px 0; }
+.leitura table { font-size: 13px; }
+.leitura tr.total td { font-weight: 700; color: var(--navy); }
+.leitura .note { margin-top: 10px; }
 .campanha-grade { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; align-items: stretch; }
 .campanha-col { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; }
 .campanha-col > span { margin-bottom: 4px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -118,4 +126,5 @@ button.card:hover { border-color: var(--navy); }
   .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar { position: relative; height: auto; }
   .cards, .campanha-grade { grid-template-columns: 1fr 1fr; }
+  .leitura { grid-template-columns: 1fr; }
 }

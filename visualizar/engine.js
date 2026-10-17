@@ -160,6 +160,9 @@ function analyze(input) {
   const offerValueStore = {};
   const offerValueBuyer = {};
   let offerValue = 0;
+  const promoByCode = new Map();
+  const codesByName = new Map();
+  const segmentMap = new Map();
   for (let index = 1; index < offerRows.length; index += 1) {
     const parts = offerRows[index].split(";");
     if (parts.length < 11) continue;
@@ -172,7 +175,48 @@ function analyze(input) {
     offerValueStore[store] = (offerValueStore[store] || 0) + value;
     const buyerName = dim.get(product)?.comprador || "Sem comprador";
     offerValueBuyer[buyerName] = (offerValueBuyer[buyerName] || 0) + value;
+    const code = parts[2];
+    const name = (parts[3] || "").trim() || "Sem nome";
+    const segment = (parts[1] || "").trim() || "Sem segmento";
+    let promo = promoByCode.get(code);
+    if (!promo) {
+      promo = { segmentos: new Set() };
+      promoByCode.set(code, promo);
+    }
+    promo.segmentos.add(segment);
+    let codes = codesByName.get(name);
+    if (!codes) {
+      codes = new Set();
+      codesByName.set(name, codes);
+    }
+    codes.add(code);
+    let bucket = segmentMap.get(segment);
+    if (!bucket) {
+      bucket = { segmento: segment, produtos: new Set(), venda: 0 };
+      segmentMap.set(segment, bucket);
+    }
+    bucket.produtos.add(product);
+    bucket.venda += value;
   }
+  const lancamento = {
+    codigos: promoByCode.size,
+    nomes: codesByName.size,
+    nomesRepetidos: [...codesByName.values()].filter((codes) => codes.size > 1).length,
+    codigosEmVariosSegmentos: [...promoByCode.values()].filter((promo) => promo.segmentos.size > 1).length,
+    exemplos: [...codesByName.entries()]
+      .filter(([, codes]) => codes.size > 1)
+      .map(([nome, codes]) => ({ nome, codigos: codes.size }))
+      .sort((a, b) => b.codigos - a.codigos || a.nome.localeCompare(b.nome, "pt-BR"))
+      .slice(0, 4),
+  };
+  const segmentos = [...segmentMap.values()]
+    .map((bucket) => ({
+      segmento: bucket.segmento,
+      itens: bucket.produtos.size,
+      venda: bucket.venda,
+      participacao: offerValue ? bucket.venda / offerValue : 0,
+    }))
+    .sort((a, b) => Number(a.segmento) - Number(b.segmento) || a.segmento.localeCompare(b.segmento, "pt-BR"));
 
   const inicial = new Map();
   const inicioRows = linesOf(input.inicio);
@@ -571,6 +615,8 @@ function analyze(input) {
     details,
     datas,
     central,
+    lancamento,
+    segmentos,
     quality,
     sistematica,
     coverLimit,
