@@ -1,4 +1,4 @@
-import { analyze, lojasFromXlsx, LOJAS } from "./engine.js";
+import { analyze, lojasFromXlsx, LOJAS } from "./engine.js?v=16";
 
 const VIEWS = [
   ["capa", "Capa"],
