@@ -56,6 +56,27 @@ function classeLinha(value) {
   return "manual";
 }
 
+function readStock(text, label) {
+  const rows = linesOf(text);
+  const header = rows[0] || "";
+  if (!header.startsWith("EMPRESA;NOME_EMPRESA;SEQPRODUTO;DESCCOMPLETA;ESTOQUE_DTBASE;DT_BASE")) {
+    return { ok: false, message: `Cabeçalho inesperado em ${label}.` };
+  }
+  const map = new Map();
+  let fora = 0;
+  for (let index = 1; index < rows.length; index += 1) {
+    const parts = rows[index].split(";");
+    if (parts.length < 6) continue;
+    if (DROP.has(parts[0])) {
+      fora += 1;
+      continue;
+    }
+    if (!KEEP.has(parts[0])) continue;
+    map.set(`${parts[0]}|${parts[2]}`, num(parts[4]));
+  }
+  return { ok: true, map, fora };
+}
+
 function parseLojas(rows) {
   const totals = {};
   for (const row of rows) {
@@ -198,16 +219,20 @@ function analyze(input) {
     bucket.produtos.add(product);
     bucket.venda += value;
   }
+  const porNome = [...codesByName.entries()]
+    .map(([nome, codes]) => ({
+      nome,
+      codigos: codes.size,
+      lista: [...codes].sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true })).join(", "),
+    }))
+    .sort((a, b) => b.codigos - a.codigos || a.nome.localeCompare(b.nome, "pt-BR"));
   const lancamento = {
     codigos: promoByCode.size,
     nomes: codesByName.size,
-    nomesRepetidos: [...codesByName.values()].filter((codes) => codes.size > 1).length,
+    nomesRepetidos: porNome.filter((row) => row.codigos > 1).length,
     codigosEmVariosSegmentos: [...promoByCode.values()].filter((promo) => promo.segmentos.size > 1).length,
-    exemplos: [...codesByName.entries()]
-      .filter(([, codes]) => codes.size > 1)
-      .map(([nome, codes]) => ({ nome, codigos: codes.size }))
-      .sort((a, b) => b.codigos - a.codigos || a.nome.localeCompare(b.nome, "pt-BR"))
-      .slice(0, 4),
+    exemplos: porNome.filter((row) => row.codigos > 1).slice(0, 4),
+    porNome,
   };
   const segmentos = [...segmentMap.values()]
     .map((bucket) => ({
@@ -218,33 +243,14 @@ function analyze(input) {
     }))
     .sort((a, b) => Number(a.segmento) - Number(b.segmento) || a.segmento.localeCompare(b.segmento, "pt-BR"));
 
-  const inicial = new Map();
-  const inicioRows = linesOf(input.inicio);
-  let inicioFora = 0;
-  for (let index = 1; index < inicioRows.length; index += 1) {
-    const parts = inicioRows[index].split(";");
-    if (parts.length < 7) continue;
-    if (DROP.has(parts[0])) {
-      inicioFora += 1;
-      continue;
-    }
-    if (!KEEP.has(parts[0])) continue;
-    inicial.set(`${parts[0]}|${parts[1]}`, num(parts[3]));
-  }
-
-  const final = new Map();
-  const fimRows = linesOf(input.fim);
-  let fimFora = 0;
-  for (let index = 1; index < fimRows.length; index += 1) {
-    const parts = fimRows[index].split(";");
-    if (parts.length < 7) continue;
-    if (DROP.has(parts[0])) {
-      fimFora += 1;
-      continue;
-    }
-    if (!KEEP.has(parts[0])) continue;
-    final.set(`${parts[0]}|${parts[1]}`, num(parts[6]));
-  }
+  const estoqueInicial = readStock(input.inicio, "estoque de quinta");
+  if (!estoqueInicial.ok) return estoqueInicial;
+  const estoqueFinal = readStock(input.fim, "estoque de domingo");
+  if (!estoqueFinal.ok) return estoqueFinal;
+  const inicial = estoqueInicial.map;
+  const final = estoqueFinal.map;
+  const inicioFora = estoqueInicial.fora;
+  const fimFora = estoqueFinal.fora;
 
   const entradas = new Map();
   const seenEntry = new Set();

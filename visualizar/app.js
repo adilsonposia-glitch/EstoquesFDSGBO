@@ -1,4 +1,4 @@
-import { analyze, lojasFromXlsx, LOJAS } from "./engine.js?v=16";
+import { analyze, lojasFromXlsx, LOJAS } from "./engine.js?v=18";
 
 const VIEWS = [
   ["capa", "Capa"],
@@ -99,6 +99,16 @@ function diaCurto(text) {
   return `${dia}/${mes}`;
 }
 
+const MESES = { jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06", jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12" };
+
+function stockFileDate(name) {
+  const match = String(name).match(/^estoque\s+(\d{2})([a-z]{3})(\d{2})\.txt$/i);
+  if (!match) return "";
+  const month = MESES[match[2].toLowerCase()];
+  if (!month) return "";
+  return `${match[1]}-${month}-20${match[3]}`;
+}
+
 const SEMANAS_KEY = "fds-oferta-semanas";
 
 function guardarSemana(result) {
@@ -155,7 +165,7 @@ async function readHandle(handle) {
 }
 
 async function collectFromDirectory(dir) {
-  const found = { sales: [], buffers: {} };
+  const found = { sales: [], stocks: [], buffers: {} };
   for await (const [name, handle] of dir.entries()) {
     if (handle.kind !== "file") continue;
     const date = name.match(/^(\d{2}-\d{2}-\d{4})\.txt$/i);
@@ -163,12 +173,17 @@ async function collectFromDirectory(dir) {
       found.sales.push({ date: date[1], handle });
       continue;
     }
+    const stockDate = stockFileDate(name);
+    if (stockDate) {
+      found.stocks.push({ date: stockDate, handle });
+      continue;
+    }
     const key = name.toLowerCase();
     if (key.startsWith("ofertasdoper")) {
       found.buffers.ofertas = handle;
       continue;
     }
-    if (["estoqueinicio.txt", "estoquefim.txt", "entradas.txt", "dimproduto.txt", "automatico.txt", "lojas.xlsx"].includes(key)) {
+    if (["entradas.txt", "dimproduto.txt", "automatico.txt", "lojas.xlsx"].includes(key)) {
       found.buffers[key] = handle;
     }
   }
@@ -196,6 +211,7 @@ async function loadServerFiles() {
   const jobs = discovered.found.sales.length + 6;
   const offerName = discovered.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
   if (!offerName) throw new Error("Falta o arquivo Ofertas do período.");
+  if (!discovered.found.sales.length) throw new Error("A pasta precisa ter quatro arquivos de venda, de quinta a domingo.");
   for (const date of discovered.found.sales) {
     step += 1;
     setProgress(step / jobs, `Lendo ${date}.txt`);
@@ -209,8 +225,12 @@ async function loadServerFiles() {
     if (!response.ok) throw new Error(`Arquivo ausente: ${name}`);
     return decode(await response.arrayBuffer());
   }
-  const inicio = await textFile("EstoqueInicio.txt");
-  const fim = await textFile("EstoqueFim.txt");
+  const inicioName = discovered.names.find((name) => stockFileDate(name) === discovered.found.sales[0]);
+  const fimName = discovered.names.find((name) => stockFileDate(name) === discovered.found.sales[discovered.found.sales.length - 1]);
+  if (!inicioName) throw new Error(`Falta o estoque de ${discovered.found.sales[0]}.`);
+  if (!fimName) throw new Error(`Falta o estoque de ${discovered.found.sales[discovered.found.sales.length - 1]}.`);
+  const inicio = await textFile(inicioName);
+  const fim = await textFile(fimName);
   const entradas = await textFile("Entradas.txt");
   const dim = await textFile("Dimproduto.txt");
   const automatico = await textFile("Automatico.txt");
@@ -235,8 +255,14 @@ async function loadDirectory(dir) {
     setProgress(0.45, `Lendo ${name}`);
     return handle;
   }
-  const inicio = decode(await readHandle(await required("EstoqueInicio.txt")));
-  const fim = decode(await readHandle(await required("EstoqueFim.txt")));
+  const inicioItem = found.stocks.find((item) => item.date === sales[0].date);
+  const fimItem = found.stocks.find((item) => item.date === sales[sales.length - 1].date);
+  if (!sales.length || !inicioItem) throw new Error(sales.length ? `Falta o estoque de ${sales[0].date}.` : "A pasta precisa ter quatro arquivos de venda, de quinta a domingo.");
+  if (!fimItem) throw new Error(`Falta o estoque de ${sales[sales.length - 1].date}.`);
+  setProgress(0.45, `Lendo estoque de ${inicioItem.date}`);
+  const inicio = decode(await readHandle(inicioItem.handle));
+  setProgress(0.5, `Lendo estoque de ${fimItem.date}`);
+  const fim = decode(await readHandle(fimItem.handle));
   const entradas = decode(await readHandle(await required("Entradas.txt")));
   const dim = decode(await readHandle(await required("Dimproduto.txt")));
   const automatico = decode(await readHandle(await required("Automatico.txt")));
@@ -665,6 +691,25 @@ function renderCapa(result) {
       <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
     </div>
     <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos.</p>`;
+  const detalheOfertas = view.querySelector("#detalhe-ofertas");
+  if (detalheOfertas) {
+    detalheOfertas.onclick = () => {
+      state.view = "detalhe";
+      state.grupo = "lancamento";
+      state.detalheTitulo = "Lançamento das ofertas";
+      state.page = 0;
+      state.sortKey = "";
+      state.sortDir = "desc";
+      state.texto = "";
+      state.loja = "";
+      state.comprador = "";
+      state.produto = "";
+      state.departamento = "";
+      state.secao = "";
+      state.repeticao = "";
+      render();
+    };
+  }
   view.querySelectorAll("[data-foco]").forEach((button) => {
     button.onclick = () => { state.foco = button.dataset.foco; state.page = 0; state.sortKey = ""; render(); };
   });
@@ -752,7 +797,7 @@ function htmlLancamento(result, esc) {
   const somaItens = result.segmentos.reduce((total, row) => total + row.itens, 0);
   return `<section class="leitura">
       <article class="card leitura-nota">
-        <span>Lançamento das ofertas</span>
+        <div class="leitura-topo"><span>Lançamento das ofertas</span><button type="button" id="detalhe-ofertas">Detalhe</button></div>
         <p>O nome da oferta é texto livre. Foram digitados <strong>${itens(item.codigos)}</strong> códigos e só <strong>${itens(item.nomes)}</strong> nomes. <strong>${itens(item.nomesRepetidos)}</strong> nomes juntam códigos diferentes, e <strong>${itens(item.codigosEmVariosSegmentos)}</strong> códigos foram lançados em mais de um segmento. A performance de uma ação não se apura pelo nome.</p>
         <ul>${exemplos}</ul>
       </article>
@@ -802,9 +847,30 @@ function htmlRepeticao(result, info, esc) {
   return `<h2 class="section">Itens que repetem</h2><div class="cards">${cards}</div><p class="note">O clique abre os produtos dessa faixa. Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>`;
 }
 
+function renderLancamento() {
+  const item = state.result.lancamento;
+  let rows = item?.porNome || [];
+  if (state.texto) {
+    const query = state.texto.toLocaleLowerCase("pt-BR");
+    rows = rows.filter((row) => `${row.nome} ${row.lista}`.toLocaleLowerCase("pt-BR").includes(query));
+  }
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Nome ou código" value="${esc(state.texto)}"></div>${table([
+    { key: "nome", label: "Nome da oferta", value: (row) => row.nome, cell: (row) => row.nome },
+    { key: "codigos", label: "Cadastradas nesse nome", num: true, value: (row) => row.codigos, cell: (row) => itens(row.codigos) },
+    { key: "lista", label: "Códigos", value: (row) => row.lista, cell: (row) => row.lista },
+  ], rows)}<p class="note">Cada linha é um nome digitado em PROMOCAO. Cadastradas nesse nome é a quantidade de códigos (SEQPROMOCAO) com esse texto. São ${itens(item.nomes)} nomes e ${itens(item.codigos)} códigos.</p>`;
+  document.querySelector("#voltar").onclick = voltarCapa;
+  bindFilters(rows);
+}
+
 function renderDetalhe() {
   if (state.grupo === "repeticao") {
     renderRepeticao();
+    return;
+  }
+  if (state.grupo === "lancamento") {
+    renderLancamento();
     return;
   }
   const rows = currentRows();
@@ -954,7 +1020,9 @@ function renderDetail() {
 }
 
 function exportCsv() {
-  const rows = state.view === "lojas" ? state.result?.lojas || [] : state.view === "compradores" ? state.result?.compradores || [] : state.view === "datas" ? state.result?.datas || [] : currentRows();
+  const rows = state.view === "detalhe" && state.grupo === "lancamento"
+    ? state.result?.lancamento?.porNome || []
+    : state.view === "lojas" ? state.result?.lojas || [] : state.view === "compradores" ? state.result?.compradores || [] : state.view === "datas" ? state.result?.datas || [] : currentRows();
   if (!rows.length) return;
   const headers = Object.keys(rows[0]);
   const body = rows.map((row) => headers.map((key) => {

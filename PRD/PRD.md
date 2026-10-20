@@ -4,7 +4,7 @@ Aplicação local para ler a pasta da semana, recalcular a oferta de quinta a do
 
 A tela que vale é `visualizar/` (HTML, CSS e JavaScript). `template-mestre-main` foi só a referência visual. A marca é `LogoABB.jpeg`. A página abre nesta máquina, em `http://127.0.0.1:8765/visualizar/`, com a pasta do projeto servida na porta 8765. O repositório no GitHub guarda os arquivos; o link do GitHub não executa a capa.
 
-Regra revista em 17/10/2026. A oferta deixou de ser a venda dos quatro arquivos diários. O denominador da participação deixou de ser `Lojas.xlsx`. Os números da seção 10 são os desta revisão.
+Regra revista em 20/10/2026. O estoque de quinta e o de domingo vêm do arquivo de seis colunas, e a quantidade lida é `ESTOQUE_DTBASE`. A leitura dos pares de venda e de estoque dos produtos de oferta continua uma vez por período (seção 4.1). A regra de 17/10/2026 continua valendo: a oferta é `OfertasdoPeríodo.txt` e o denominador da participação é a soma dos quatro arquivos diários. Os números de venda da seção 10 permanecem. Os números de estoque foram reapurados com os arquivos novos.
 
 ## 1. Objetivo
 
@@ -76,15 +76,17 @@ Uma pasta fixa. As vendas levam a data no nome. Os demais nomes são estáveis.
 | `OfertasdoPeríodo.txt` | Itens em oferta. Venda da oferta em `VLRTOTALVDA`. O nome do arquivo traz `í` |
 | `dd-mm-aaaa.txt` (quatro arquivos) | Venda total da loja naquele dia. A data está no nome. Não é a oferta |
 | `Lojas.xlsx` | Venda total de outro recorte. Não é o denominador da participação |
-| `EstoqueInicio.txt` | Posição de quinta. `QTDINICIAL` é o saldo antes dos movimentos do dia |
-| `EstoqueFim.txt` | Posição de domingo. `ESTOQUE` é o saldo ao fim da janela |
+| `Estoque DDmmmAA.txt` da quinta | Posição de quinta. A quantidade é `ESTOQUE_DTBASE`. Exemplo: `Estoque 01Out26.txt` |
+| `Estoque DDmmmAA.txt` do domingo | Posição de domingo. A quantidade é `ESTOQUE_DTBASE`. Exemplo: `Estoque 04Out26.txt` |
 | `Entradas.txt` | Entradas do período, em unidade de venda. Continua na conta de saldo |
 | `Dimproduto.txt` | Comprador e hierarquia `N1` a `N4` |
 | `Embalagem.txt` | Padrão de compra e de transferência |
 | `Auditoria de Cadastro.txt` | Fornecedor e código de barras |
 | `Automatico.txt` | Pedidos da semana, a sistemática e a quantidade recebida por modalidade |
 
-Formato dos TXT: separador `;`, decimal com vírgula, codificação Windows-1252. Data `dd/mm/aaaa` nos estoques e nas entradas. Data `dd-mm-aaaa` no `Automatico.txt` e no arquivo de ofertas. Não há rodapé. A última linha é um registro.
+Formato dos TXT: separador `;`, decimal com vírgula, codificação Windows-1252. No estoque, a data-base vem em `DT_BASE`, no formato `aaaa-mm-dd-hh.mm.ss.ffffff`, e o nome do arquivo traz o dia: `Estoque 01Out26.txt` é 01/10/2026. Data `dd/mm/aaaa` nas entradas. Data `dd-mm-aaaa` no `Automatico.txt` e no arquivo de ofertas. Não há rodapé. A última linha é um registro.
+
+O estoque tem seis colunas, nesta ordem: `EMPRESA`, `NOME_EMPRESA`, `SEQPRODUTO`, `DESCCOMPLETA`, `ESTOQUE_DTBASE`, `DT_BASE`. Quinta e domingo usam o mesmo desenho. A quantidade dos dois é `ESTOQUE_DTBASE`. `DT_BASE` pode ser anterior ao dia do arquivo: é a última movimentação, e isso também ocorre em linha com saldo. A leitura não descarta essas linhas.
 
 O arquivo de ofertas traz `NROSEGMENTO`. Os quatro arquivos de venda do dia não têm coluna de segmento. `NRODOCTOS` é a quantidade de documentos, não o segmento.
 
@@ -100,14 +102,27 @@ Validação obrigatória:
 
 - quatro arquivos de venda, de quinta a domingo, em sequência;
 - cabeçalhos esperados;
-- `EstoqueInicio` com `ULTDTAMOVIMENTO` único na quinta;
-- `EstoqueFim` com a maior data no domingo;
+- um arquivo de estoque com a data de quinta no nome e outro com a data de domingo, no formato `Estoque DDmmmAA.txt`, com o cabeçalho das seis colunas;
 - `DTRECEBIMENTO` de `Automatico.txt` e `DTAENTRADA` de `Entradas.txt` dentro dos quatro dias;
 - a pasta lida tem exatamente quatro arquivos de venda, de quinta a domingo. Duas semanas juntas na mesma pasta falham a validação;
 - linhas idênticas repetidas em `Entradas.txt` entram uma vez, e a tela mostra quantas foram descartadas;
 - empresas fora da lista são ignoradas, com a contagem visível na qualidade dos arquivos.
 
 Arquivo obrigatório ausente ou período fora de quinta a domingo interrompe a atualização.
+
+### 4.1 Leitura única do período
+
+Os arquivos de estoque trazem o estoque da empresa inteira, todos os itens. O que este projeto analisa é o produto em oferta. Os quatro arquivos diários trazem a venda da loja inteira. Desses, o uso que permanece depois da primeira apuração é o total da empresa.
+
+A cada período novo, os pares de venda e de estoque dos produtos destacados em `OfertasdoPeríodo.txt` são identificados uma vez. Par é loja + produto da oferta, nas 13 lojas.
+
+Depois dessa apuração, mudança no projeto não atualiza de novo esses dados. Tela, regra ou código, no mesmo período, não relê o estoque inteiro da empresa e não refaz o cruzamento de todos os pares. O estoque que segue na análise é o dos pares já identificados.
+
+O total de venda da empresa fica destacado à parte, como o cartão da capa já faz. Ele serve para comparar com o total de venda da oferta e ver a participação da oferta na venda da empresa. Somente isso. Nas mudanças seguintes do mesmo período, não se reabre a venda linha a linha de item que não está na oferta.
+
+A leitura completa volta quando entra outro período: outros quatro dias, outro arquivo de ofertas, outros estoques. Nesse período novo, de novo uma vez só. O estoque de quinta é o arquivo `Estoque DDmmmAA.txt` dessa quinta, e o de domingo é o arquivo do domingo. Os dois trazem `ESTOQUE_DTBASE`.
+
+Em 20/10/2026 essa fonte substituiu `QTDINICIAL` e `ESTOQUE` dos TXT antigos. A participação continua sendo a venda da oferta dividida pela venda da empresa. Os números de venda da seção 10 permanecem. Os números de estoque são os da nova leitura.
 
 ## 5. Regras de cálculo
 
@@ -139,13 +154,13 @@ A participação da rede usa as mesmas duas somas. Nesta semana de prova: R$ 6.8
 
 Conta de apoio, em quantidade:
 
-`QTDINICIAL` de quinta + `QTDITEM` das entradas de quinta a domingo − quantidade vendida nos quatro dias.
+`ESTOQUE_DTBASE` de quinta + `QTDITEM` das entradas de quinta a domingo − quantidade vendida nos quatro dias.
 
-O resultado se compara a `ESTOQUE` de `EstoqueFim`.
+O resultado se compara a `ESTOQUE_DTBASE` de domingo.
 
 Sell-through da oferta = quantidade vendida dividida por (saldo de quinta + entradas).
 
-`QTDSAIDA` do estoque é maior que a venda em parte dos itens. A saída de estoque inclui movimento que a venda não mostra. A conta oficial de abastecimento usa a quantidade vendida, não `QTDSAIDA`.
+O arquivo de estoque não traz `QTDSAIDA`. A conta oficial de abastecimento usa a quantidade vendida.
 
 Nas operações 802, 902 e 903 de `Entradas.txt`, `QTDITEM` vem zerado. Essa quantidade não entra na conta.
 
@@ -269,9 +284,9 @@ python -m http.server 8765
 
 O endereço é `http://127.0.0.1:8765/visualizar/`. Ele só responde com essa janela aberta. `file://` e o link do GitHub não executam a capa: a leitura pede a listagem da pasta pai, que o servidor local devolve e o GitHub não devolve. O botão **Atualizar** relê os arquivos dentro do programa já aberto. Para pegar uma alteração de código, a página precisa ser aberta de novo (Ctrl+F5). `engine.js` entra com um sufixo de versão no import, para o navegador não reutilizar o cálculo antigo.
 
-A pasta nova da semana substitui, na raiz do projeto, os quatro dias, o arquivo de ofertas, os estoques, as entradas, o automático, o cadastro e o `Lojas.xlsx`. Outra pasta entra pelo botão **Escolher pasta**. A pasta lida precisa ter só os quatro dias daquela semana.
+A pasta nova da semana substitui, na raiz do projeto, os quatro dias, o arquivo de ofertas, os dois estoques `Estoque DDmmmAA.txt`, as entradas, o automático, o cadastro e o `Lojas.xlsx`. Outra pasta entra pelo botão **Escolher pasta**. A pasta lida precisa ter só os quatro dias daquela semana, com o estoque da quinta e o do domingo no nome.
 
-Volume de referência: o arquivo de ofertas tem cerca de 120 mil linhas. O cruzamento principal é loja + produto da oferta.
+Volume de referência: o arquivo de ofertas tem cerca de 120 mil linhas. O cruzamento principal é loja + produto da oferta. Estoque e venda fora desses pares entram uma vez por período, pela seção 4.1: da venda da empresa fica o total, e do estoque ficam os pares da oferta. Mudança posterior no mesmo período não relê o arquivo inteiro.
 
 Não há login nesta versão. O repositório `https://github.com/adilsonposia-glitch/EstoquesFDSGBO` está público e contém os TXT e o `Lojas.xlsx`. O GitHub Pages não está ligado.
 
@@ -290,7 +305,7 @@ Os números abaixo valem só para 01 a 04/10/2026, com a oferta lida de `Ofertas
 
 A prova gravada em 16/10 tratava os quatro arquivos diários como a oferta (9.927 produtos) e usava `Lojas.xlsx` no denominador (participação 30,67%). Essa prova não vale mais.
 
-Venda da oferta: R$ 6.816.656,97. Venda total do período, soma dos quatro arquivos diários: R$ 11.747.881,59. Participação da rede: 58,02%. Lucro bruto: R$ 994.565,31. Margem pelo custo bruto: R$ 1.648.408,56. Produtos de oferta: 2.665.
+Venda da oferta: R$ 6.816.656,97. Venda total do período, soma dos quatro arquivos diários: R$ 11.747.881,59. Participação da rede: 58,02%. Lucro bruto: R$ 994.565,31. Margem pelo custo bruto: R$ 1.648.408,56. Produtos de oferta: 2.665. Esses números de venda não mudaram em 20/10/2026. Os números de estoque abaixo foram reapurados com `ESTOQUE_DTBASE` de `Estoque 01Out26.txt` e `Estoque 04Out26.txt`.
 
 | Loja | Oferta | Venda do período | Participação |
 |---|---:|---:|---:|
@@ -308,11 +323,11 @@ Venda da oferta: R$ 6.816.656,97. Venda total do período, soma dos quatro arqui
 | 16 Terreirão | 343.090,38 | 569.468,88 | 60,25% |
 | 17 P. Lucas | 403.722,35 | 609.514,78 | 66,24% |
 
-Pares loja + produto: 34.645 (2.665 × 13). Com venda: 20.655. Sem venda: 13.990. Sem venda em loja nenhuma: 451 produtos. Sem venda com saldo: 3.506. Excesso de estoque: 2.066. Ruptura (saldo zero): 1.169. Ruptura provável: 513. Sem entrada: 81.
+Pares loja + produto: 34.645 (2.665 × 13). Com venda: 20.655. Sem venda: 13.990. Sem venda em loja nenhuma: 451 produtos. Sem venda com saldo: 1.339. Excesso de estoque: 479. Ruptura (saldo zero): 3.132. Ruptura provável: 131. Sem entrada: 28.
 
 Dois abastecimentos, pela quantidade recebida: 61 pares. Só automático: 1.062. Só manual: 3.715.
 
-André Malheiros, no universo da oferta, em linhas de revenda: automático 111 e manual 676 (14,1% e 85,9%). Pares 2.262. Irregular 223. Ruptura provável 77. Ruptura 35. Dois abastecimentos 14.
+André Malheiros, no universo da oferta, em linhas de revenda: automático 111 e manual 676 (14,1% e 85,9%). Pares 2.262. Dois abastecimentos 14. Os 174 produtos dele não têm linha no estoque de 04/10/2026, então irregular, ruptura provável e ruptura ficam sem posição.
 
 Lançamento: 213 códigos e 155 nomes. 32 nomes em mais de um código. 70 códigos em mais de um segmento. Exemplos: PROMOCAO em 15 códigos, FLV em 9, GUIA DIG PG04 em 4, OFERTA INTERNA em 4.
 
