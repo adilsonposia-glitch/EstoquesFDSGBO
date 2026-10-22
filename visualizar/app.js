@@ -1,4 +1,4 @@
-import { analyze, lojasFromXlsx, LOJAS } from "./engine.js?v=18";
+import { analyze, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=19";
 
 const VIEWS = [
   ["capa", "Capa"],
@@ -34,6 +34,7 @@ const state = {
   repeticao: "",
   sortKey: "",
   sortDir: "asc",
+  anterior: null,
 };
 
 const nav = document.querySelector("#nav");
@@ -55,6 +56,32 @@ function qty(value) {
 }
 function itens(value) {
   return Math.round(value || 0).toLocaleString("pt-BR");
+}
+
+const NOME_SEGMENTO = {
+  1: "Varejo",
+  2: "iFood",
+  3: "Delivery",
+  4: "Superclube",
+  5: "Cafeteria",
+  6: "Restaurante",
+  7: "99 Food",
+  100: "Rock in Rio",
+};
+
+function nomeSegmento(codigo) {
+  const nome = NOME_SEGMENTO[String(codigo).trim()];
+  return nome ? `${codigo} · ${nome}` : String(codigo);
+}
+
+function dica(texto, esc, canto = false) {
+  return `<i class="hint${canto ? " hint-canto" : ""}" tabindex="0">?<span class="hint-box">${esc(texto)}</span></i>`;
+}
+
+function parte(quantidade, base) {
+  if (!base) return "—";
+  if (quantidade === base) return "total";
+  return pct(quantidade / base);
 }
 function relacaoEstoque(row) {
   if (row.inicial == null || row.final == null || Math.abs(row.inicial) < 0.05) return null;
@@ -111,22 +138,39 @@ function stockFileDate(name) {
 
 const SEMANAS_KEY = "fds-oferta-semanas";
 
+function semanasGuardadas() {
+  try {
+    const todas = JSON.parse(localStorage.getItem(SEMANAS_KEY) || "[]");
+    return Array.isArray(todas) ? todas.filter((item) => item && item.inicio && item.fim && Array.isArray(item.produtos)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function gravarSemanas(todas) {
+  const ultimas = [...todas].sort((a, b) => diaNumero(a.inicio) - diaNumero(b.inicio)).slice(-4);
+  localStorage.setItem(SEMANAS_KEY, JSON.stringify(ultimas));
+  state.semanas = ultimas;
+}
+
 function guardarSemana(result) {
   const produtos = [...new Set(result.details.map((row) => String(row.produto)))];
   const semana = { inicio: result.periodo[0], fim: result.periodo[3], produtos };
-  let todas = [];
-  try {
-    todas = JSON.parse(localStorage.getItem(SEMANAS_KEY) || "[]");
-    if (!Array.isArray(todas)) todas = [];
-  } catch {
-    todas = [];
-  }
-  todas = todas.filter((item) => item && item.inicio !== semana.inicio);
+  const todas = semanasGuardadas().filter((item) => item.inicio !== semana.inicio);
   todas.push(semana);
-  todas.sort((a, b) => diaNumero(a.inicio) - diaNumero(b.inicio));
-  todas = todas.slice(-4);
-  localStorage.setItem(SEMANAS_KEY, JSON.stringify(todas));
-  state.semanas = todas;
+  gravarSemanas(todas);
+}
+
+function produtosDoArquivoDeOferta(text) {
+  const produtos = new Set();
+  const rows = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  for (let index = 1; index < rows.length; index += 1) {
+    if (!rows[index]) continue;
+    const parts = rows[index].split(";");
+    if (parts.length < 7 || !RETAIL.includes(parts[0])) continue;
+    produtos.add(parts[6]);
+  }
+  return [...produtos];
 }
 
 function repeticaoOferta(result) {
@@ -190,12 +234,12 @@ async function collectFromDirectory(dir) {
   return found;
 }
 
-async function collectFromServer() {
-  const listing = await fetch("../");
+async function collectListing(base) {
+  const listing = await fetch(base);
   if (!listing.ok) throw new Error("sem listagem");
   const html = await listing.text();
   const names = [...html.matchAll(/href="([^"]+)"/g)].map((match) => decodeURIComponent(match[1].split("/").pop()));
-  const found = { sales: [], texts: {}, lojas: null };
+  const found = { sales: [] };
   for (const name of names) {
     const date = name.match(/^(\d{2}-\d{2}-\d{4})\.txt$/i);
     if (date) found.sales.push(date[1]);
@@ -204,8 +248,22 @@ async function collectFromServer() {
   return { names, found };
 }
 
-async function loadServerFiles() {
-  const discovered = await collectFromServer();
+async function lembrarSemanaDaRaiz() {
+  const raiz = await collectListing("../");
+  if (raiz.found.sales.length !== 4) return;
+  const inicio = raiz.found.sales[0];
+  const fim = raiz.found.sales[raiz.found.sales.length - 1];
+  const guardadas = semanasGuardadas();
+  if (guardadas.some((item) => item.inicio === inicio)) return;
+  const offerName = raiz.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
+  if (!offerName) return;
+  const response = await fetch(`../${encodeURIComponent(offerName)}`);
+  if (!response.ok) return;
+  guardadas.push({ inicio, fim, produtos: produtosDoArquivoDeOferta(decode(await response.arrayBuffer())) });
+  gravarSemanas(guardadas);
+}
+
+async function loadFromListing(base, discovered) {
   const sales = [];
   let step = 0;
   const jobs = discovered.found.sales.length + 6;
@@ -215,13 +273,13 @@ async function loadServerFiles() {
   for (const date of discovered.found.sales) {
     step += 1;
     setProgress(step / jobs, `Lendo ${date}.txt`);
-    const response = await fetch(`../${date}.txt`);
+    const response = await fetch(`${base}${encodeURIComponent(`${date}.txt`)}`);
     sales.push({ date, text: decode(await response.arrayBuffer()) });
   }
   async function textFile(name) {
     step += 1;
     setProgress(step / jobs, `Lendo ${name}`);
-    const response = await fetch(`../${name}`);
+    const response = await fetch(`${base}${encodeURIComponent(name)}`);
     if (!response.ok) throw new Error(`Arquivo ausente: ${name}`);
     return decode(await response.arrayBuffer());
   }
@@ -237,9 +295,162 @@ async function loadServerFiles() {
   const ofertas = await textFile(offerName);
   step += 1;
   setProgress(0.92, "Lendo Lojas.xlsx");
-  const lojasResponse = await fetch("../Lojas.xlsx");
+  let lojasResponse = await fetch(`${base}${encodeURIComponent("Lojas.xlsx")}`);
+  if (!lojasResponse.ok) lojasResponse = await fetch("../Lojas.xlsx");
+  if (!lojasResponse.ok) throw new Error("Arquivo ausente: Lojas.xlsx");
   const lojas = await lojasFromXlsx(await lojasResponse.arrayBuffer());
   return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
+}
+
+async function loadServerFiles() {
+  const nova = `../${encodeURIComponent("Entrada Novo Período")}/`;
+  let base = "../";
+  let discovered = null;
+  try {
+    const candidata = await collectListing(nova);
+    if (candidata.found.sales.length === 4) {
+      base = nova;
+      discovered = candidata;
+    }
+  } catch {
+    base = "../";
+  }
+  if (!discovered) discovered = await collectListing(base);
+  if (base !== "../") await lembrarSemanaDaRaiz();
+  const files = await loadFromListing(base, discovered);
+  if (base !== "../") files.anterior = await vendaDaRaiz();
+  return files;
+}
+
+function numeroBr(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const n = Number(text.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function somarVendaDiaria(text, acc) {
+  const rows = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  for (let index = 1; index < rows.length; index += 1) {
+    if (!rows[index]) continue;
+    const parts = rows[index].split(";");
+    if (parts.length < 7 || !RETAIL.includes(parts[0])) continue;
+    const valor = numeroBr(parts[4]);
+    const quantidade = numeroBr(parts[3]);
+    const atual = acc.produtos[parts[1]] || { valor: 0, quantidade: 0 };
+    atual.valor += valor;
+    atual.quantidade += quantidade;
+    acc.produtos[parts[1]] = atual;
+    acc.lojas[parts[0]] = (acc.lojas[parts[0]] || 0) + valor;
+    acc.total += valor;
+  }
+}
+
+function somarOfertaPorLoja(text, acc) {
+  const rows = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  for (let index = 1; index < rows.length; index += 1) {
+    if (!rows[index]) continue;
+    const parts = rows[index].split(";");
+    if (parts.length < 11 || !RETAIL.includes(parts[0])) continue;
+    const valor = numeroBr(parts[10]);
+    acc.oferta[parts[0]] = (acc.oferta[parts[0]] || 0) + valor;
+    acc.vendaOferta += valor;
+  }
+}
+
+async function vendaDaRaiz() {
+  const raiz = await collectListing("../");
+  if (raiz.found.sales.length !== 4) return null;
+  const acc = { produtos: {}, lojas: {}, oferta: {}, total: 0, vendaOferta: 0 };
+  for (const date of raiz.found.sales) {
+    setProgress(0.9, `Lendo a semana anterior, ${date}.txt`);
+    const response = await fetch(`../${encodeURIComponent(`${date}.txt`)}`);
+    if (!response.ok) return null;
+    somarVendaDiaria(decode(await response.arrayBuffer()), acc);
+  }
+  const offerName = raiz.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
+  if (offerName) {
+    const response = await fetch(`../${encodeURIComponent(offerName)}`);
+    if (response.ok) somarOfertaPorLoja(decode(await response.arrayBuffer()), acc);
+  }
+  return {
+    inicio: raiz.found.sales[0],
+    fim: raiz.found.sales[raiz.found.sales.length - 1],
+    produtos: acc.produtos,
+    lojas: acc.lojas,
+    oferta: acc.oferta,
+    total: acc.total,
+    vendaOferta: acc.vendaOferta,
+  };
+}
+
+const MARGEM = 0.05;
+
+function vendaAtualPorProduto(result) {
+  const mapa = new Map();
+  for (const row of result.details) {
+    const id = String(row.produto);
+    const atual = mapa.get(id) || { produto: row.produto, descricao: row.descricao, comprador: row.comprador, valor: 0, quantidade: 0 };
+    atual.valor += row.venda;
+    atual.quantidade += row.quantidade;
+    mapa.set(id, atual);
+  }
+  return mapa;
+}
+
+function comparacaoVenda(result) {
+  const anterior = state.anterior;
+  if (!anterior) return null;
+  const info = repeticaoOferta(result);
+  if (!info.anterior) return null;
+  const atuais = vendaAtualPorProduto(result);
+  const linhas = [];
+  for (const [id, item] of atuais) {
+    const antes = anterior.produtos[id] || { valor: 0, quantidade: 0 };
+    const delta = item.valor - antes.valor;
+    const repetiu = Boolean(info.naAnterior.get(id));
+    let faixa = "manteve";
+    if (antes.valor <= MARGEM && item.valor <= MARGEM) faixa = "zero";
+    else if (antes.valor <= MARGEM && item.valor > MARGEM) faixa = "passou";
+    else if (item.valor > antes.valor + MARGEM) faixa = "subiu";
+    else if (antes.valor > item.valor + MARGEM) faixa = "caiu";
+    linhas.push({ ...item, antes: antes.valor, qtdAntes: antes.quantidade, delta, percentual: antes.valor > MARGEM ? delta / antes.valor : null, repetiu, faixa });
+  }
+  const repetidos = linhas.filter((row) => row.repetiu);
+  const estreantes = linhas.filter((row) => !row.repetiu);
+  const contar = (lista, faixa) => lista.filter((row) => row.faixa === faixa);
+  const soma = (lista, campo) => lista.reduce((total, row) => total + row[campo], 0);
+  const lojas = result.lojas.map((loja) => {
+    const ofertaAntes = anterior.oferta[loja.id] || 0;
+    const totalAntes = anterior.lojas[loja.id] || 0;
+    return {
+      nome: loja.nome,
+      antes: totalAntes ? ofertaAntes / totalAntes : 0,
+      agora: loja.participacao,
+      pontos: (loja.participacao - (totalAntes ? ofertaAntes / totalAntes : 0)) * 100,
+      ofertaAntes,
+      ofertaAgora: loja.venda,
+    };
+  }).sort((a, b) => a.pontos - b.pontos);
+  return {
+    inicio: anterior.inicio,
+    fim: anterior.fim,
+    repetidos,
+    estreantes,
+    subiu: contar(repetidos, "subiu"),
+    caiu: contar(repetidos, "caiu"),
+    zero: contar(repetidos, "zero"),
+    passou: contar(repetidos, "passou"),
+    estreiaZero: estreantes.filter((row) => row.valor <= MARGEM),
+    deltaRepetidos: soma(repetidos, "delta"),
+    vendaRepetidosAntes: soma(repetidos, "antes"),
+    vendaRepetidosAgora: soma(repetidos, "valor"),
+    vendaEstreantes: soma(estreantes, "valor"),
+    vendaEstreantesAntes: soma(estreantes, "antes"),
+    vendaOfertaAntes: anterior.vendaOferta,
+    totalAntes: anterior.total,
+    lojas,
+  };
 }
 
 async function loadDirectory(dir) {
@@ -278,6 +489,7 @@ async function run(loader) {
   try {
     const files = await loader();
     state.files = files;
+    state.anterior = files.anterior || null;
     setProgress(0.96, "Calculando a semana");
     await new Promise((resolve) => setTimeout(resolve, 20));
     const result = analyze({ ...files, coverLimit: state.coverLimit });
@@ -580,27 +792,35 @@ function campanha(result) {
   const contagem = (predicado) => rows.reduce((total, row) => total + (predicado(row) ? 1 : 0), 0);
   const comVenda = new Set();
   for (const row of rows) if (row.vendeu) comVenda.add(row.produto);
+  const produtos = result.quality.produtosOferta;
+  const pares = rows.length;
+  const duas = contagem((row) => row.automatico && row.manual);
+  const soAuto = contagem((row) => row.automatico && !row.manual);
+  const soManual = contagem((row) => row.manual && !row.automatico);
+  const receberam = duas + soAuto + soManual;
+  const sobrePares = "O percentual é sobre os pares loja e produto da oferta.";
+  const sobreRecebidos = "O percentual é sobre os pares que receberam automático, manual ou os dois.";
   return [
-    ["Oferta", [
-      ["", "Produtos de oferta", result.quality.produtosOferta],
-      ["produto-sem-venda", "Sem venda em loja nenhuma", result.quality.produtosOferta - comVenda.size],
-      ["", "Pares loja e produto", rows.length],
+    ["Oferta", "Produtos distintos no arquivo de ofertas e o cruzamento de cada um com as 13 lojas.", [
+      ["", "Produtos de oferta", produtos, produtos, "Produtos distintos em Ofertas do período, nas 13 lojas. Este é o total dos produtos."],
+      ["produto-sem-venda", "Sem venda em loja nenhuma", produtos - comVenda.size, produtos, "Produto de oferta que não aparece nos quatro arquivos diários, em nenhuma das 13 lojas. O percentual é sobre os produtos de oferta."],
+      ["", "Pares loja e produto", pares, pares, "Cada produto de oferta em cada uma das 13 lojas. Este é o total dos pares. Venda, estoque e a conta de saldo usam esses pares."],
     ]],
-    ["Venda", [
-      ["com-venda", "Pares com venda", contagem((row) => row.vendeu)],
-      ["sem-venda-total", "Pares sem venda", contagem((row) => !row.vendeu)],
-      ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo")],
+    ["Venda", "Pares da oferta encontrados, ou não, nos quatro arquivos diários.", [
+      ["com-venda", "Pares com venda", contagem((row) => row.vendeu), pares, `Par loja e produto que aparece em um dos quatro arquivos diários. ${sobrePares}`],
+      ["sem-venda-total", "Pares sem venda", contagem((row) => !row.vendeu), pares, `Par da oferta que não aparece nos arquivos diários. ${sobrePares}`],
+      ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo"), pares, `Par sem venda e com ESTOQUE_DTBASE de domingo maior que zero. Já entra em pares sem venda. ${sobrePares}`],
     ]],
-    ["Estoque", [
-      ["excesso", "Excesso de estoque", contagem((row) => row.irregular)],
-      ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero")],
-      ["provavel", "Ruptura provável", contagem((row) => row.provavel)],
-      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada")],
+    ["Estoque", "Posição de domingo e a comparação com o saldo de quinta.", [
+      ["excesso", "Excesso de estoque", contagem((row) => row.irregular), pares, `Saldo de domingo maior que o saldo de quinta, os dois em ESTOQUE_DTBASE, com ou sem venda. ${sobrePares}`],
+      ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero"), pares, `Saldo de domingo igual a zero, quando existe linha de estoque nesse dia. Par sem linha não entra. ${sobrePares}`],
+      ["provavel", "Ruptura provável", contagem((row) => row.provavel), pares, `Houve venda e o saldo de domingo cobre menos de um dia do ritmo desta semana. ${sobrePares}`],
+      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada"), pares, `O saldo de domingo ficou maior que o de quinta e Entradas.txt não tem QTDITEM nesse par. ${sobrePares}`],
     ]],
-    ["Abastecimento", [
-      ["ambos", "Duas modalidades", contagem((row) => row.automatico && row.manual)],
-      ["so-automatico", "Só automático", contagem((row) => row.automatico && !row.manual)],
-      ["so-manual", "Só manual", contagem((row) => row.manual && !row.automatico)],
+    ["Abastecimento", "Modalidade pela quantidade recebida em Automatico.txt.", [
+      ["ambos", "Duas modalidades", duas, receberam, `O par tem QTDRECEBIDA no automático e no manual. ${sobreRecebidos}`],
+      ["so-automatico", "Só automático", soAuto, receberam, `QTDRECEBIDA automática maior que zero e manual igual a zero. ${sobreRecebidos}`],
+      ["so-manual", "Só manual", soManual, receberam, `QTDRECEBIDA manual maior que zero e automática igual a zero. ${sobreRecebidos}`],
     ]],
   ];
 }
@@ -667,15 +887,15 @@ function renderCapa(result) {
     : "";
   view.innerHTML = `
     <div class="cards">
-      <article class="card"><span>Venda da oferta</span><strong>${money(rede.venda)}</strong></article>
-      <article class="card"><span>Venda total do período</span><strong>${money(rede.total)}</strong></article>
-      <article class="card"><span>Participação da oferta</span><strong>${pct(rede.participacao)}</strong></article>
-      <article class="card"><span>Produtos de oferta</span><strong>${result.quality.produtosOferta.toLocaleString("pt-BR")}</strong></article>
-      <article class="card" title="Lucro bruto soma VLRLUCRO dos itens de oferta que venderam. Esse valor já vem pronto no arquivo de vendas."><span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
-      <article class="card" title="Margem pelo custo bruto é a venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto."><span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
+      <article class="card">${dica("Soma de VLRTOTALVDA em Ofertas do período, nas 13 lojas.", esc, true)}<span>Venda da oferta</span><strong>${money(rede.venda)}</strong></article>
+      <article class="card">${dica("Soma de VLRVENDA dos quatro arquivos diários, nas 13 lojas. Inclui o que não estava em oferta.", esc, true)}<span>Venda total do período</span><strong>${money(rede.total)}</strong></article>
+      <article class="card">${dica("Venda da oferta dividida pela venda total do período.", esc, true)}<span>Participação da oferta</span><strong>${pct(rede.participacao)}</strong></article>
+      <article class="card">${dica("Produtos distintos em Ofertas do período, nas 13 lojas.", esc, true)}<span>Produtos de oferta</span><strong>${result.quality.produtosOferta.toLocaleString("pt-BR")}</strong></article>
+      <article class="card">${dica("Soma de VLRLUCRO dos pares loja e produto que venderam. O valor já vem no arquivo diário.", esc, true)}<span>Lucro bruto</span><strong>${money(rede.lucro)}</strong><em>VLRLUCRO</em></article>
+      <article class="card">${dica("Venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto.", esc, true)}<span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
     ${htmlLancamento(result, esc)}
-    <div class="campanha-grade">${campanha(result).map(([titulo, linhas]) => `<article class="card campanha-col"><span>${titulo}</span>${linhas.map(([id, nome, quantidade]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : "disabled"}><em>${nome}</em><strong>${itens(quantidade)}</strong></button>`).join("")}</article>`).join("")}</div>
+    <div class="campanha-grade">${campanha(result).map(([titulo, resumo, linhas]) => `<article class="card campanha-col">${dica(resumo, esc, true)}<span class="campanha-titulo">${titulo}</span>${linhas.map(([id, nome, quantidade, base, texto]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : ""}><span class="stat-nome"><em>${nome}</em></span><span class="stat-fim"><span class="stat-num"><strong>${itens(quantidade)}</strong><small class="parte">${parte(quantidade, base)}</small></span>${dica(texto, esc)}</span></button>`).join("")}</article>`).join("")}</div>
     ${repeticao}
     <div class="switch">
       <button type="button" class="${state.foco === "comprador" ? "" : "secondary"}" data-foco="comprador">Por comprador</button>
@@ -690,7 +910,11 @@ function renderCapa(result) {
       <div class="table-wrap"><table class="capa-table"><thead><tr><th><button type="button" class="sort" data-sort="nome">${label}${sortMark("nome")}</button></th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${CAPA_METRICS.length + 1 + (mostraVezes ? 1 : 0)}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
       <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
     </div>
-    <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos.</p>`;
+    <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos. O ponto de interrogação explica o critério da linha.</p>`;
+  view.querySelectorAll(".hint").forEach((el) => {
+    el.addEventListener("click", (event) => event.stopPropagation());
+    el.addEventListener("mousedown", (event) => event.stopPropagation());
+  });
   const detalheOfertas = view.querySelector("#detalhe-ofertas");
   if (detalheOfertas) {
     detalheOfertas.onclick = () => {
@@ -753,6 +977,19 @@ function renderCapa(result) {
       render();
     };
   });
+  view.querySelectorAll(".comp").forEach((button) => {
+    button.onclick = () => {
+      state.view = "detalhe";
+      state.grupo = "venda-semana";
+      state.repeticao = button.dataset.faixa;
+      state.detalheTitulo = button.dataset.rotulo;
+      state.page = 0;
+      state.texto = "";
+      state.sortKey = "";
+      state.sortDir = "desc";
+      render();
+    };
+  });
   view.querySelectorAll(".repeat").forEach((button) => {
     button.onclick = () => {
       state.view = "detalhe";
@@ -793,21 +1030,21 @@ function htmlLancamento(result, esc) {
   const item = result.lancamento;
   if (!item || !result.segmentos) return "";
   const exemplos = item.exemplos.map((row) => `<li><strong>${esc(row.nome)}</strong> em ${itens(row.codigos)} códigos</li>`).join("");
-  const linhas = result.segmentos.map((row) => `<tr><td>Segmento ${esc(row.segmento)}</td><td class="num">${itens(row.itens)}</td><td class="num">${money(row.venda)}</td><td class="num">${pct(row.participacao)}</td></tr>`).join("");
+  const linhas = result.segmentos.map((row) => `<tr><td>${esc(nomeSegmento(row.segmento))}</td><td class="num">${itens(row.itens)}</td><td class="num">${money(row.venda)}</td><td class="num">${pct(row.participacao)}</td></tr>`).join("");
   const somaItens = result.segmentos.reduce((total, row) => total + row.itens, 0);
   return `<section class="leitura">
       <article class="card leitura-nota">
-        <div class="leitura-topo"><span>Lançamento das ofertas</span><button type="button" id="detalhe-ofertas">Detalhe</button></div>
+        <div class="leitura-topo"><span>Lançamento das ofertas ${dica("Cada código é um SEQPROMOCAO. O texto PROMOCAO é livre e não é rebatizado.", esc)}</span><button type="button" id="detalhe-ofertas">Detalhe</button></div>
         <p>O nome da oferta é texto livre. Foram digitados <strong>${itens(item.codigos)}</strong> códigos e só <strong>${itens(item.nomes)}</strong> nomes. <strong>${itens(item.nomesRepetidos)}</strong> nomes juntam códigos diferentes, e <strong>${itens(item.codigosEmVariosSegmentos)}</strong> códigos foram lançados em mais de um segmento. A performance de uma ação não se apura pelo nome.</p>
         <ul>${exemplos}</ul>
       </article>
       <article class="card leitura-tabela">
-        <span>Itens e venda por segmento</span>
+        <span>Itens e venda por segmento ${dica("O número é o NROSEGMENTO do arquivo. O nome ao lado é o canal. Itens, valor e participação saem do arquivo de ofertas, sem recálculo.", esc)}</span>
         <table>
           <thead><tr><th>Segmento</th><th class="num">Itens em oferta</th><th class="num">Valor vendido</th><th class="num">Part. %</th></tr></thead>
           <tbody>${linhas}<tr class="total"><td>Total da oferta</td><td class="num">${itens(result.quality.produtosOferta)}</td><td class="num">${money(result.rede.venda)}</td><td class="num">${pct(1)}</td></tr></tbody>
         </table>
-        <p class="note">Segmento é o NROSEGMENTO do arquivo de ofertas. Part. % é a venda do segmento sobre o total vendido em oferta. A soma dos itens (${itens(somaItens)}) passa de ${itens(result.quality.produtosOferta)} porque o mesmo produto entra em mais de um segmento.</p>
+        <p class="note">O número é o NROSEGMENTO do arquivo. O nome ao lado é o canal. Part. % é a venda do segmento sobre o total vendido em oferta. A soma dos itens (${itens(somaItens)}) passa de ${itens(result.quality.produtosOferta)} porque o mesmo produto entra em mais de um segmento.</p>
       </article>
     </section>`;
 }
@@ -841,10 +1078,49 @@ function htmlRepeticao(result, info, esc) {
   const cards = blocos.map(([id, rotulo, pred]) => {
     const quantidade = contar(pred);
     const ratio = info.total ? quantidade / info.total : 0;
-    return `<button type="button" class="card repeat" data-repeticao="${id}" data-rotulo="${esc(rotulo)}"><span>${esc(rotulo)}</span><strong>${pct(ratio)}</strong><em class="itens">${itens(quantidade)}</em></button>`;
+    const texto = id === "estreia"
+      ? "Produto desta oferta que não estava na oferta da semana anterior. O percentual é sobre os produtos de oferta desta semana."
+      : id === "anterior"
+        ? "Produto desta oferta que já estava na oferta da semana anterior. O percentual é sobre os produtos de oferta desta semana."
+        : "Faixa da memória das semanas anteriores. O percentual é sobre os produtos de oferta desta semana.";
+    return `<button type="button" class="card repeat" data-repeticao="${id}" data-rotulo="${esc(rotulo)}">${dica(texto, esc, true)}<span>${esc(rotulo)}</span><strong>${pct(ratio)}</strong><em class="itens">${itens(quantidade)}</em></button>`;
   }).join("");
   const aviso = n >= 3 ? " Em pelo menos 2 semanas inclui quem esteve em 2 e em 3." : "";
-  return `<h2 class="section">Itens que repetem</h2><div class="cards">${cards}</div><p class="note">O clique abre os produtos dessa faixa. Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>`;
+  return `<h2 class="section">Itens que repetem</h2><div class="cards">${cards}</div><p class="note">O clique abre os produtos dessa faixa. Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>${htmlComparacao(result, esc)}`;
+}
+
+function htmlComparacao(result, esc) {
+  const comp = comparacaoVenda(result);
+  if (!comp) return "";
+  const card = (id, rotulo, quantidade, base, texto) => `<button type="button" class="card comp" data-faixa="${id}" data-rotulo="${esc(rotulo)}">${dica(texto, esc, true)}<span>${esc(rotulo)}</span><strong>${itens(quantidade)}</strong><em class="parte">${parte(quantidade, base)}</em></button>`;
+  const repetidos = comp.repetidos.length;
+  const estreantes = comp.estreantes.length;
+  const cards = [
+    card("subiu", "Repetidos que venderam mais", comp.subiu.length, repetidos, "Produto que repetiu na oferta e a venda dos arquivos diários desta semana passou da anterior. O percentual é sobre os produtos que repetiram."),
+    card("caiu", "Repetidos que venderam menos", comp.caiu.length, repetidos, "Produto que repetiu na oferta e a venda dos arquivos diários desta semana ficou abaixo da anterior. O percentual é sobre os produtos que repetiram."),
+    card("zero", "Repetidos sem venda nas duas semanas", comp.zero.length, repetidos, "Produto que repetiu na oferta e não teve venda nos arquivos diários das duas semanas. Não usa ruptura. O percentual é sobre os produtos que repetiram."),
+    card("passou", "Repetidos que passaram a vender", comp.passou.length, repetidos, "Produto que repetiu na oferta, não vendeu na semana anterior e vendeu nesta. O percentual é sobre os produtos que repetiram."),
+    card("estreia-zero", "Estreantes sem venda", comp.estreiaZero.length, estreantes, "Produto que estreou nesta oferta e não teve venda nesta semana. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. O percentual é sobre os estreantes."),
+  ].join("");
+  const ranking = (titulo, linhas) => {
+    const body = linhas.map((row) => `<tr><td>${row.produto}</td><td>${esc(row.descricao)}</td><td class="num">${money(row.antes)}</td><td class="num">${money(row.valor)}</td><td class="num">${money(row.delta)}</td><td class="num">${row.percentual == null ? "—" : pct(row.percentual)}</td></tr>`).join("");
+    return `<div><h2>${esc(titulo)}</h2><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Descrição</th><th class="num">Semana anterior</th><th class="num">Esta semana</th><th class="num">Diferença</th><th class="num">Variação</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  };
+  const altas = [...comp.subiu].sort((a, b) => b.delta - a.delta).slice(0, 8);
+  const quedas = [...comp.caiu].sort((a, b) => a.delta - b.delta).slice(0, 8);
+  const estreiaAlta = [...comp.estreantes].sort((a, b) => b.valor - a.valor).slice(0, 8);
+  const lojas = comp.lojas.map((loja) => `<tr><td>${esc(loja.nome)}</td><td class="num">${pct(loja.antes)}</td><td class="num">${pct(loja.agora)}</td><td class="num">${loja.pontos.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td><td class="num">${money(loja.ofertaAgora - loja.ofertaAntes)}</td></tr>`).join("");
+  const partAntes = comp.totalAntes ? comp.vendaOfertaAntes / comp.totalAntes : 0;
+  const partAgora = result.rede.total ? result.rede.venda / result.rede.total : 0;
+  return `
+    <h2 class="section">Venda em relação à semana ${diaCurto(comp.inicio)} a ${diaCurto(comp.fim)}</h2>
+    <div class="cards">${cards}</div>
+    <p class="note">A venda do produto é a dos quatro arquivos diários. O percentual dos quatro primeiros cartões é sobre os ${itens(comp.repetidos.length)} que repetiram. O de estreantes sem venda é sobre os ${itens(comp.estreantes.length)} que estrearam: eles não estavam na oferta da semana anterior, então a venda considerada é a desta semana. Sem venda nas duas semanas vale só para quem repetiu e fica para a RP. Esta comparação não usa ruptura. Os repetidos saíram de ${money(comp.vendaRepetidosAntes)} para ${money(comp.vendaRepetidosAgora)} (${money(comp.deltaRepetidos)}). Os estreantes venderam ${money(comp.vendaEstreantes)} nesta semana.</p>
+    <div class="duas-tabelas">${ranking("Maiores altas entre os repetidos", altas)}${ranking("Maiores quedas entre os repetidos", quedas)}</div>
+    ${ranking("Maiores vendas entre os estreantes", estreiaAlta)}
+    <h2 class="section">Participação da oferta por loja</h2>
+    <p class="note">A rede saiu de ${pct(partAntes)} para ${pct(partAgora)}. A participação continua sendo a venda do arquivo de ofertas dividida pela venda da loja.</p>
+    <div class="table-wrap"><table><thead><tr><th>Loja</th><th class="num">Semana anterior</th><th class="num">Esta semana</th><th class="num">Pontos</th><th class="num">Diferença da oferta</th></tr></thead><tbody>${lojas}</tbody></table></div>`;
 }
 
 function renderLancamento() {
@@ -867,6 +1143,10 @@ function renderLancamento() {
 function renderDetalhe() {
   if (state.grupo === "repeticao") {
     renderRepeticao();
+    return;
+  }
+  if (state.grupo === "venda-semana") {
+    renderVendaSemana();
     return;
   }
   if (state.grupo === "lancamento") {
@@ -917,6 +1197,40 @@ function renderRepeticao() {
     { key: "vezes", label: "Semanas anteriores", num: true, value: (row) => row.vezes, cell: (row) => itens(row.vezes) },
     { key: "anterior", label: "Semana anterior", value: (row) => row.na ? "Sim" : "Não", cell: (row) => row.na ? "Sim" : "Não" },
   ], rows)}`;
+  document.querySelector("#voltar").onclick = voltarCapa;
+  bindFilters(rows);
+}
+
+function linhasDaFaixa() {
+  const comp = comparacaoVenda(state.result);
+  if (!comp) return [];
+  const faixas = {
+    subiu: comp.subiu,
+    caiu: comp.caiu,
+    zero: comp.zero,
+    passou: comp.passou,
+    "estreia-zero": comp.estreiaZero,
+  };
+  return faixas[state.repeticao] || [];
+}
+
+function renderVendaSemana() {
+  let rows = linhasDaFaixa();
+  if (state.texto) {
+    const query = state.texto.toLocaleLowerCase("pt-BR");
+    rows = rows.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
+  }
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const estreante = state.repeticao === "estreia-zero";
+  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
+    { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+    { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+    { key: "antes", label: "Semana anterior", num: !estreante, value: (row) => estreante ? 0 : row.antes, cell: (row) => estreante ? "Não estava na oferta" : money(row.antes) },
+    { key: "valor", label: "Esta semana", num: true, value: (row) => row.valor, cell: (row) => money(row.valor) },
+    { key: "delta", label: "Diferença", num: true, value: (row) => row.delta, cell: (row) => estreante ? "—" : money(row.delta) },
+    { key: "percentual", label: "Variação", num: true, value: (row) => row.percentual ?? -999, cell: (row) => row.percentual == null || estreante ? "—" : pct(row.percentual) },
+  ], rows)}<p class="note">${estreante ? "Estreante começa nesta oferta. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. Sem venda é a desta semana." : "Variação em branco é semana anterior sem venda. A lista sem venda nas duas semanas não separa ruptura."}</p>`;
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
@@ -1020,7 +1334,9 @@ function renderDetail() {
 }
 
 function exportCsv() {
-  const rows = state.view === "detalhe" && state.grupo === "lancamento"
+  const rows = state.view === "detalhe" && state.grupo === "venda-semana"
+    ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual }))
+    : state.view === "detalhe" && state.grupo === "lancamento"
     ? state.result?.lancamento?.porNome || []
     : state.view === "lojas" ? state.result?.lojas || [] : state.view === "compradores" ? state.result?.compradores || [] : state.view === "datas" ? state.result?.datas || [] : currentRows();
   if (!rows.length) return;

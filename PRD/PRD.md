@@ -4,7 +4,7 @@ Aplicação local para ler a pasta da semana, recalcular a oferta de quinta a do
 
 A tela que vale é `visualizar/` (HTML, CSS e JavaScript). `template-mestre-main` foi só a referência visual. A marca é `LogoABB.jpeg`. A página abre nesta máquina, em `http://127.0.0.1:8765/visualizar/`, com a pasta do projeto servida na porta 8765. O repositório no GitHub guarda os arquivos; o link do GitHub não executa a capa.
 
-Regra revista em 20/10/2026. O estoque de quinta e o de domingo vêm do arquivo de seis colunas, e a quantidade lida é `ESTOQUE_DTBASE`. A leitura dos pares de venda e de estoque dos produtos de oferta continua uma vez por período (seção 4.1). A regra de 17/10/2026 continua valendo: a oferta é `OfertasdoPeríodo.txt` e o denominador da participação é a soma dos quatro arquivos diários. Os números de venda da seção 10 permanecem. Os números de estoque foram reapurados com os arquivos novos.
+Regra revista em 22/10/2026. Quando a capa lê a pasta `Entrada Novo Período` e a semana anterior ainda está na raiz, a comparação de venda usa os arquivos diários das duas semanas. Essa comparação não usa ruptura. A regra de 20/10/2026 continua: o estoque de quinta e o de domingo vêm do arquivo de seis colunas, e a quantidade lida é `ESTOQUE_DTBASE`. A leitura dos pares de venda e de estoque dos produtos de oferta continua uma vez por período (seção 4.1). A regra de 17/10/2026 continua valendo: a oferta é `OfertasdoPeríodo.txt` e o denominador da participação é a soma dos quatro arquivos diários. Os números de venda da seção 10 permanecem. Os números de estoque foram reapurados em 20/10. A seção 10.1 é a comparação 08–11 contra 01–04, não a substituição da prova.
 
 ## 1. Objetivo
 
@@ -234,7 +234,19 @@ Cada oferta digitada é um `SEQPROMOCAO`. O texto `PROMOCAO` é livre. Nesta sem
 
 O mesmo produto entra em mais de um segmento. A soma dos itens por segmento passa da quantidade de produtos de oferta.
 
+O número na capa continua sendo o `NROSEGMENTO`. O nome do canal fica ao lado, sem trocar o código: 1 Varejo, 2 iFood, 3 Delivery, 4 Superclube, 5 Cafeteria, 6 Restaurante, 7 99 Food e 100 Rock in Rio. Itens, valor e participação continuam os do arquivo.
+
 A venda gravada na ação é `QTDTOTALVDA` e `VLRTOTALVDA` daquela linha. Uma ação pode estar com essas colunas vazias enquanto o mesmo par loja + produto vendeu em outro código, com outro preço. Exemplo: `LÂMINA FDS SUPERCLUBE 02-10 À 05-10-2026` (código 61755) tem venda vazia nas 926 linhas; os mesmos pares venderam na lâmina comum (código 61753).
+
+### 5.11 Venda entre duas semanas
+
+A memória do navegador continua só com os códigos e o período. A progressão de venda não sai dessa memória. Ela sai dos quatro arquivos diários de cada semana.
+
+A venda do produto é `VLRVENDA` dos arquivos diários, somada nas 13 lojas. Não é `VLRTOTALVDA`, porque um código de oferta pode estar vazio enquanto o produto vendeu em outro. A variação percentual só entra quando a semana anterior teve venda. Sem venda na anterior, o produto fica no grupo que passou a vender, sem percentual.
+
+Entre os produtos que repetiram na oferta, a capa separa quatro grupos: vendeu mais, vendeu menos, sem venda nas duas semanas e passou a vender. Entre os que estrearam, a capa lista os que não venderam nesta semana. O estreante não estava na oferta da semana anterior, então essa semana não entra como venda. Sem venda nas duas semanas é só de quem repetiu, e fica para a RP. Ruptura não entra nesta comparação.
+
+A participação por loja continua sendo `VLRTOTALVDA` da oferta dividido pela venda da loja. A capa mostra as duas semanas lado a lado quando a anterior ainda está na raiz.
 
 ## 6. O que a tela mostra
 
@@ -242,11 +254,13 @@ A navegação começa na **Capa**. Cada tabela filtra por loja, comprador, depar
 
 **Capa.** Seis cartões: venda da oferta, venda total do período, participação, produtos de oferta, lucro bruto e margem pelo custo bruto. Os dois últimos têm texto explicando que as contas são separadas.
 
-Abaixo, quatro colunas com a contagem da semana: Oferta, Venda, Estoque e Abastecimento. O clique na linha abre os itens. Produtos de oferta e pares loja e produto não abrem lista.
+Abaixo, quatro colunas com a contagem da semana: Oferta, Venda, Estoque e Abastecimento. Cada linha mostra a quantidade e, em tipo menor, o percentual sobre o total daquela conta. Em Oferta, sem venda em loja nenhuma usa os produtos. Em Venda e Estoque, o percentual usa os pares loja e produto. Em Abastecimento, usa os pares que receberam automático, manual ou os dois. O ponto de interrogação de cada cartão explica o critério. O clique na linha abre os itens. Produtos de oferta e pares loja e produto não abrem lista.
 
 No mesmo bloco, o lançamento das ofertas (códigos, nomes e exemplos de nome repetido) e a tabela por `NROSEGMENTO`: itens em oferta, valor vendido e participação sobre o total vendido em oferta.
 
 A memória de até quatro semanas fica no navegador, na chave `fds-oferta-semanas`, só com os códigos dos produtos e o período. Trocar os arquivos da pasta não apaga essa memória no mesmo navegador e no mesmo endereço. Outro navegador, ou limpar os dados do site, apaga. Com uma semana só, a capa avisa que a comparação aparece na semana seguinte.
+
+Quando a semana lida está em `Entrada Novo Período` e a anterior continua na raiz, a capa acrescenta a venda entre as duas semanas, pela seção 5.11: cartões dos grupos, as maiores altas e quedas dos repetidos, as maiores vendas dos estreantes e a participação de cada loja nas duas semanas. O número do cartão fica centralizado. O percentual, em tipo menor, é sobre os produtos que repetiram; no cartão dos estreantes, é sobre os que estrearam. O clique no cartão abre a lista. Essa leitura não usa estoque nem ruptura.
 
 A tabela de percentuais tem uma linha por comprador, loja, produto, departamento ou seção. As colunas são automático, manual, dois abastecimentos, ruptura provável, ruptura, excesso de estoque, sem venda com saldo e sem entrada. O número em vermelho é o numerador. Automático e manual, nas linhas de comprador e de loja, dividem as linhas de revenda. Em produto, departamento e seção, dividem os pares que receberam alguma modalidade. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual, pela `QTDRECEBIDA`.
 
@@ -342,11 +356,27 @@ Lançamento: 213 códigos e 155 nomes. 32 nomes em mais de um código. 70 códig
 
 A soma dos itens por segmento é 8.527, acima de 2.665, porque o mesmo produto entra em mais de um segmento. O total da linha de baixo é o universo da oferta, não a soma da coluna.
 
+### 10.1 Comparação 08–11 contra 01–04
+
+A capa de 22/10 lê `Entrada Novo Período` (08 a 11/10/2026) e compara com a raiz (01 a 04/10/2026). A oferta da segunda semana tem 1.130 produtos e `VLRTOTALVDA` de 5.141.303,80. A venda das lojas nessa semana é 10.853.693,96. Participação 47,37%. Na primeira semana eram 2.665 produtos, 6.816.656,97 e 58,02%.
+
+800 produtos repetiram. 330 estrearam. 1.865 saíram da oferta. A venda diária dos 800 saiu de 5.241.333,19 para 4.873.378,11, diferença de −367.955,08. Desses, 287 venderam mais, 411 venderam menos, 92 não venderam nas duas semanas e 10 passaram a vender.
+
+Os 330 estreantes venderam 459.242,83 nesta semana. 70 não venderam. Eles não estavam na oferta de 01 a 04, então a semana anterior não entra como venda. O percentual é 21,21% dos estreantes.
+
+A lista comercial de quem repetiu e não vendeu nas duas semanas continua em 92 produtos, sem ruptura. O estreante sem venda é outra lista: 70 produtos.
+
+As maiores altas, em valor, entre os repetidos: 47829 acém bovino porcionado, 56328 arroz Tio Bruno 5 kg, 88164 picanha bovina congelada maturatta, 79464 papel higiênico Comfy, 1910 leite condensado Moça 395 g. As maiores quedas: 12269 arroz Dona Elza 5 kg, 10789 acém bovino em pedaço, 41370 café União 500 g, 10918 filé de costela bovina maturatta, 3261 pão de forma Seven Boys 450 g. O acém porcionado subiu no mesmo comprador em que o acém em pedaço caiu.
+
+A participação caiu nas 13 lojas. As maiores quedas em pontos: Pedra 69,4% para 52,0% (−17,4), Via Parque 43,3% para 27,9% (−15,4), Barra 41,2% para 26,4% (−14,7). A maior queda de valor da oferta foi a Pedra.
+
+Esses números não substituem a seção 10. A prova de 01 a 04 permanece.
+
 ## 11. Ordem de construção
 
 1. A capa de `visualizar/` já calcula a semana de prova e reproduz a seção 10.
-2. A semana seguinte entra no lugar dos arquivos atuais, ou por **Escolher pasta**, com exatamente quatro dias. A comparação com as semanas anteriores usa a memória do navegador, no máximo quatro períodos.
-3. Nome de oferta e segmento permanecem como foram digitados. A capa mostra a falta de padrão. Ela não rebatiza `NROSEGMENTO`.
+2. A semana seguinte entra no lugar dos arquivos atuais, por **Escolher pasta**, ou pela pasta `Entrada Novo Período` quando ela tiver exatamente quatro dias. A presença do produto nas semanas anteriores usa a memória do navegador, no máximo quatro períodos. A venda entre as duas semanas, quando a anterior ainda está na raiz, segue a seção 5.11.
+3. Nome de oferta e o código do segmento permanecem como foram digitados. A capa não rebatiza `NROSEGMENTO`. O nome do canal fica ao lado do número, pelo gabarito da seção 5.10.
 
 ## 12. Pronto quando
 
