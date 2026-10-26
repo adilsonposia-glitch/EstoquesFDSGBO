@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{TITULO}}</title>
+<script>/* liga o movimento só se a pessoa não pediu menos animação no sistema */
+if (!window.matchMedia || !matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('anima');</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===== Tokens: paleta extraída da logo Supermarket Rio de Janeiro ===== */
+:root {
+  --verde: #0A9C13;          /* verde "Sm": cor principal, faixas e destaques */
+  --verde-texto: #07780F;    /* verde escuro para texto pequeno (contraste AA no branco) */
+  --verde-claro: #52B465;    /* gráficos, séries secundárias */
+  --verde-fundo: #E8F5EA;    /* fundo de chips e linhas positivas */
+  --vermelho: #DB3129;       /* vermelho "market": alertas, quedas, carrinho */
+  --vermelho-fundo: #FCE9E8; /* fundo de chips e linhas negativas */
+  --tinta: #0F2444;          /* azul-marinho da logo Adilson Baptista: texto principal */
+  --tinta-suave: #4A5B78;    /* texto secundário */
+  --papel: #FFFFFF;
+  --fundo: #F4F8F5;
+  --linha: #D9E3DC;
+  --placa-logo: #FFFFFF;     /* placa branca atrás das logos (os JPG têm fundo branco) */
+  --suave: cubic-bezier(.22, .8, .24, 1);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --verde: #1DB82A; --verde-texto: #4FD65B; --verde-claro: #52B465; --verde-fundo: #12301A;
+    --vermelho: #F0564E; --vermelho-fundo: #3A1816;
+    --tinta: #E8EEF8; --tinta-suave: #A3B1C8;
+    --papel: #16202E; --fundo: #0E1620; --linha: #2A3A4E;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --verde: #1DB82A; --verde-texto: #4FD65B; --verde-claro: #52B465; --verde-fundo: #12301A;
+  --vermelho: #F0564E; --vermelho-fundo: #3A1816;
+  --tinta: #E8EEF8; --tinta-suave: #A3B1C8;
+  --papel: #16202E; --fundo: #0E1620; --linha: #2A3A4E;
+  color-scheme: dark;
+}
+
+/* ===== Base ===== */
+:root { box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+*, *::before, *::after { box-sizing: inherit; }
+body {
+  margin: 0; background: var(--fundo); color: var(--tinta);
+  font: 400 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+h1, h2, h3 { font-family: "Outfit", "Segoe UI", system-ui, sans-serif; line-height: 1.15; margin: 0; letter-spacing: -0.01em; }
+.wrap { width: min(1120px, 100% - 2.5rem); margin-inline: auto; }
+
+/* ===== Cabeçalho ===== */
+.topo { position: relative; overflow: hidden; background: var(--verde); color: #fff; border-bottom: 5px solid var(--vermelho); }
+.topo .wrap { display: flex; align-items: center; gap: 1.25rem; padding-block: 1.25rem; }
+.topo img.marca { width: 72px; height: 72px; flex: none; border-radius: 50%; background: var(--placa-logo); }
+.topo h1 { font-size: clamp(1.5rem, 3.6vw, 2.4rem); font-weight: 800; }
+.topo p { margin: .25rem 0 0; opacity: .92; font-size: .95rem; }
+
+/* ===== Indicadores: um painel único com divisórias ===== */
+.indicadores { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-block: 1.75rem; background: var(--papel); border: 1px solid var(--linha); border-radius: 10px; overflow: hidden; }
+.indicador { padding: 1.1rem 1.25rem; border-left: 1px solid var(--linha); }
+.indicador:first-child { border-left: 0; }
+.indicador .rotulo { font-size: .85rem; color: var(--tinta-suave); }
+.indicador .valor { font: 700 1.9rem/1.2 "Outfit", sans-serif; margin-top: .2rem; }
+.indicador .linha-valor { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.chip { display: inline-block; padding: .1rem .55rem; border-radius: 999px; font-size: .82rem; font-weight: 600; }
+.chip.sobe { background: var(--verde-fundo); color: var(--verde-texto); }
+.chip.desce { background: var(--vermelho-fundo); color: var(--vermelho); }
+.chip .seta { display: inline-block; }
+
+/* ===== Seções e tabelas ===== */
+section { margin-block: 2.25rem; }
+section > h2 { font-size: 1.45rem; font-weight: 700; padding-left: .8rem; border-left: 5px solid var(--verde); margin-bottom: 1rem; }
+section > h2 + p.lead { margin-top: -.5rem; }
+section > p.lead { color: var(--tinta-suave); max-width: 70ch; margin: 0 0 1rem .8rem; }
+.rolagem { overflow-x: auto; border: 1px solid var(--linha); border-radius: 10px; background: var(--papel); }
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { padding: .6rem .8rem; text-align: right; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { background: var(--verde); color: #fff; font-weight: 600; position: sticky; top: 0; }
+tbody tr:nth-child(even) { background: var(--fundo); }
+tbody tr + tr td { border-top: 1px solid var(--linha); }
+td.pos { color: var(--verde-texto); font-weight: 600; }
+td.neg { color: var(--vermelho); font-weight: 600; }
+tfoot td { font-weight: 700; border-top: 2px solid var(--verde); }
+
+/* ===== Gráfico de barras em SVG ===== */
+.grafico { background: var(--papel); border: 1px solid var(--linha); border-radius: 10px; padding: 1rem; }
+.grafico svg { width: 100%; max-width: 720px; height: auto; display: block; }
+.grafico text { fill: var(--tinta); font-family: "IBM Plex Sans", sans-serif; font-size: 12px; }
+.grafico .eixo { stroke: var(--linha); }
+.barra-a { fill: var(--verde); }
+.barra-b { fill: var(--verde-claro); }
+.barra-neg { fill: var(--vermelho); }
+.carro { color: var(--vermelho); }
+
+/* ===== Cesta medidora: carrinho que enche conforme o percentual (--p, de 0 a 100) ===== */
+.cesta { width: 64px; height: auto; flex: none; color: var(--vermelho); overflow: visible; }
+.cesta .nivel { fill: var(--verde); transform-box: fill-box; transform-origin: 50% 100%; transform: scaleY(calc(var(--p) / 100)); }
+.cesta .cesto { fill: var(--verde-fundo); }
+
+/* ===== Rodapé: logo Adilson Baptista sempre no fim da página ===== */
+.rodape { margin-top: 3rem; padding-block: 1.75rem 2rem; background: var(--papel); border-top: 5px solid var(--verde); }
+.rodape .wrap { display: flex; flex-direction: column; align-items: center; gap: .6rem; }
+.rodape .placa { background: var(--placa-logo); border-radius: 10px; padding: .5rem 1.25rem; }
+.rodape img.assinatura { display: block; height: 64px; width: auto; max-width: 100%; }
+.rodape small { color: var(--tinta-suave); }
+
+a:focus-visible, button:focus-visible { outline: 3px solid var(--vermelho); outline-offset: 2px; }
+@media (max-width: 560px) { .topo img.marca { width: 56px; height: 56px; } .indicador { border-left: 0; border-top: 1px solid var(--linha); } .indicador:first-child { border-top: 0; } }
+
+/* ===== Movimento (liga só com html.anima; some se a pessoa pediu menos animação) =====
+   Regra: um momento orquestrado, uma única vez, até ~1,2 s, sempre ligado a um dado.
+   Estado final = estado estático; a animação só parte de um "from". */
+.trilho-carrinho { display: none; }
+.roda { transform-box: fill-box; transform-origin: 50% 50%; animation: girar var(--giro, 1s) linear var(--voltas, 0); }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+html.anima .trilho-carrinho { display: block; position: absolute; left: -56px; bottom: 0; width: 44px; height: 39px; color: #fff; --roda-raio: var(--verde); pointer-events: none; animation: rolar 2.8s cubic-bezier(.4, .05, .3, 1) .5s both; --giro: .5s; --voltas: 7; }
+html.anima .trilho-carrinho use { --giro: .5s; --voltas: 7; }
+@keyframes rolar { from { transform: translateX(0); } to { transform: translateX(calc(100vw + 112px)); } }
+
+/* barras crescem e o carrinho as empurra até o valor */
+html.anima [data-anima] .barra-a, html.anima [data-anima] .barra-b, html.anima [data-anima] .barra-neg { transform-box: fill-box; transform-origin: 0 50%; transform: scaleX(0); }
+html.anima [data-anima].ativo .barra-a, html.anima [data-anima].ativo .barra-b, html.anima [data-anima].ativo .barra-neg { animation: crescer 1.1s var(--suave) var(--atraso, 0s) forwards; }
+html.anima [data-anima] .viaja { opacity: 0; }
+html.anima [data-anima].ativo .viaja { animation: viajar 1.1s var(--suave) var(--atraso, 0s) forwards; }
+html.anima [data-anima].ativo .viaja use { --giro: .4s; --voltas: 3; }
+@keyframes crescer { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes viajar { from { transform: translateX(calc(var(--w) * -1)); opacity: 0; } 12% { opacity: 1; } to { transform: translateX(0); opacity: 1; } }
+
+/* cesta enche */
+html.anima [data-anima] .cesta .nivel { transform: scaleY(0); }
+html.anima [data-anima].ativo .cesta .nivel { animation: encher 1.2s var(--suave) .15s forwards; }
+@keyframes encher { from { transform: scaleY(0); } to { transform: scaleY(calc(var(--p) / 100)); } }
+
+/* seta do chip dá um único empurrão depois da contagem */
+html.anima [data-anima].ativo .chip.sobe .seta { animation: sobe .5s var(--suave) 1s both; }
+html.anima [data-anima].ativo .chip.desce .seta { animation: desce .5s var(--suave) 1s both; }
+@keyframes sobe { 40% { transform: translateY(-3px); } }
+@keyframes desce { 40% { transform: translateY(3px); } }
+
+@media print {
+  .trilho-carrinho { display: none !important; }
+  html.anima [data-anima] .barra-a, html.anima [data-anima] .barra-b, html.anima [data-anima] .barra-neg { transform: none !important; animation: none !important; }
+  html.anima [data-anima] .viaja { opacity: 1 !important; animation: none !important; }
+  html.anima [data-anima] .cesta .nivel { transform: scaleY(calc(var(--p) / 100)) !important; animation: none !important; }
+  .topo { -webkit-print-color-adjust: exact; print-color-adjust: exact; } thead th { position: static; }
+}
+</style>
+</head>
+<body>
+
+<!-- Figura reutilizável: carrinho de supermercado. Use com <use href="#carrinho"> e defina color. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="carrinho" viewBox="0 0 34 30">
+    <path d="M1.5 2.5h5l3.2 15h16.3l3.5-11.5H8.4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M9.2 7h19.6l-2.9 9.5H11.6z" fill="currentColor" opacity=".22"/>
+    <path d="M13.5 7l.8 9.5M19 7v9.5M24.5 7l-.8 9.5" stroke="currentColor" stroke-width="1.2" opacity=".55"/>
+    <g class="roda"><circle cx="12.8" cy="25.4" r="3.3" fill="currentColor"/><path d="M12.8 23.1v4.6" style="stroke:var(--roda-raio, var(--papel, #fff))" stroke-width="1.2" stroke-linecap="round"/></g>
+    <g class="roda"><circle cx="24" cy="25.4" r="3.3" fill="currentColor"/><path d="M24 23.1v4.6" style="stroke:var(--roda-raio, var(--papel, #fff))" stroke-width="1.2" stroke-linecap="round"/></g>
+  </symbol>
+</svg>
+
+<header class="topo">
+  <div class="wrap">
+    <img class="marca" src="{{LOGO_SUPERMARKET}}" alt="Supermarket Rio de Janeiro">
+    <div>
+      <h1>{{TITULO}}</h1>
+      <p>{{SUBTITULO}}</p>
+    </div>
+  </div>
+  <!-- carrinho que cruza o filete vermelho uma vez ao abrir a página (só decoração) -->
+  <svg class="trilho-carrinho" viewBox="0 0 34 30" aria-hidden="true"><use href="#carrinho" width="34" height="30"/></svg>
+</header>
+
+<main class="wrap">
+
+  <!-- INDICADORES: 3 a 4 números que respondem à pergunta principal.
+       data-contar = valor final (número com ponto decimal); data-casas = casas decimais;
+       data-prefixo / data-sufixo = texto fixo antes/depois. O texto dentro do span já é o valor final. -->
+  <div class="indicadores" data-anima>
+    <div class="indicador">
+      <div class="rotulo">Venda atual</div>
+      <div class="valor"><span data-contar="14.4" data-casas="1" data-prefixo="R$ " data-sufixo=" mi">R$ 14,4 mi</span></div>
+      <span class="chip sobe"><span class="seta">▲</span> <span data-contar="3.9" data-casas="1" data-prefixo="+" data-sufixo="%">+3,9%</span> vs. anterior</span>
+    </div>
+    <div class="indicador">
+      <div class="rotulo">Margem atual</div>
+      <div class="valor"><span data-contar="27.84" data-casas="2" data-sufixo="%">27,84%</span></div>
+      <span class="chip desce"><span class="seta">▼</span> <span data-contar="0.08" data-casas="2" data-prefixo="−" data-sufixo=" p.p.">−0,08 p.p.</span></span>
+    </div>
+    <div class="indicador">
+      <div class="rotulo">Lojas na análise</div>
+      <div class="valor"><span data-contar="13" data-casas="0">13</span></div>
+    </div>
+    <div class="indicador">
+      <div class="rotulo">Matinais no mix</div>
+      <div class="linha-valor">
+        <div class="valor"><span data-contar="21.1" data-casas="1" data-sufixo="%">21,1%</span></div>
+        <!-- cesta medidora: troque --p (0 a 100) pelo percentual -->
+        <svg class="cesta" style="--p:21.1" viewBox="0 0 34 30" role="img" aria-label="Cesta com 21,1% de enchimento">
+          <defs><clipPath id="cesto"><path d="M9.2 7h19.6l-2.9 9.5H11.6z"/></clipPath></defs>
+          <path class="cesto" d="M9.2 7h19.6l-2.9 9.5H11.6z"/>
+          <g clip-path="url(#cesto)"><rect class="nivel" x="8" y="7" width="22" height="9.5"/></g>
+          <path d="M1.5 2.5h5l3.2 15h16.3l3.5-11.5H8.4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="12.8" cy="25.4" r="3.3" fill="currentColor"/><circle cx="24" cy="25.4" r="3.3" fill="currentColor"/>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEÇÃO COM TABELA: use td.pos / td.neg nas variações -->
+  <section>
+    <h2>Venda e margem por grupo</h2>
+    <p class="lead">Texto de uma ou duas frases dizendo o que a tabela mostra e o que merece atenção.</p>
+    <div class="rolagem">
+      <table>
+        <thead><tr><th>Grupo</th><th>Venda atual</th><th>Var. venda</th><th>Margem atual</th><th>Dif. p.p.</th></tr></thead>
+        <tbody>
+          <tr><td>Refrigerante</td><td>1.407.681</td><td class="pos">+13,2%</td><td>22,60%</td><td class="pos">+1,13</td></tr>
+          <tr><td>Café</td><td>1.384.805</td><td class="neg">−16,3%</td><td>20,64%</td><td class="pos">+2,04</td></tr>
+          <tr><td>Biscoitos doce</td><td>964.758</td><td class="pos">+0,6%</td><td>26,30%</td><td class="neg">−0,65</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- SEÇÃO COM GRÁFICO: barras em SVG inline. Cada barra tem um carrinho na ponta que carrega o valor.
+       Para cada barra: rect com width = valor x escala; style="--w:<largura>px" no <g class="viaja">;
+       o <g class="viaja"> fica na posição FINAL (ponta da barra); a animação o traz desde a origem. -->
+  <section>
+    <h2>Comparativo de margem</h2>
+    <div class="grafico" data-anima>
+      <svg viewBox="0 0 640 170" role="img" aria-label="Margem atual por grupo, duas séries">
+        <rect class="barra-a" x="150" y="8" width="12" height="12" rx="2" style="transform:none;animation:none"/><text x="168" y="19">Barra Oeste</text>
+        <rect class="barra-b" x="270" y="8" width="12" height="12" rx="2" style="transform:none;animation:none"/><text x="288" y="19">Demais associados</text>
+        <line class="eixo" x1="150" y1="34" x2="150" y2="164"/>
+
+        <text x="140" y="68" text-anchor="end">Cerveja</text>
+        <rect class="barra-a" x="150" y="52" width="167" height="22" rx="3"/>
+        <g class="viaja" style="--w:167px"><use class="carro" href="#carrinho" x="319" y="51" width="26" height="23"/><text x="349" y="68">16,8%</text></g>
+        <rect class="barra-b" x="150" y="78" width="58" height="14" rx="3" style="--atraso:.15s"/>
+        <g class="viaja" style="--w:58px;--atraso:.15s"><use class="carro" href="#carrinho" x="210" y="77" width="18" height="16"/><text x="232" y="89">5,9%</text></g>
+
+        <text x="140" y="128" text-anchor="end">Leite em pó</text>
+        <rect class="barra-a" x="150" y="112" width="145" height="22" rx="3" style="--atraso:.1s"/>
+        <g class="viaja" style="--w:145px;--atraso:.1s"><use class="carro" href="#carrinho" x="297" y="111" width="26" height="23"/><text x="327" y="128">14,6%</text></g>
+        <rect class="barra-b" x="150" y="138" width="68" height="14" rx="3" style="--atraso:.25s"/>
+        <g class="viaja" style="--w:68px;--atraso:.25s"><use class="carro" href="#carrinho" x="220" y="137" width="18" height="16"/><text x="242" y="149">6,8%</text></g>
+      </svg>
+    </div>
+  </section>
+
+</main>
+
+<footer class="rodape">
+  <div class="wrap">
+    <div class="placa"><img class="assinatura" src="{{LOGO_ABB}}" alt="Adilson Baptista — Inteligência de negócio"></div>
+    <small>{{DATA_GERACAO}}</small>
+  </div>
+</footer>
+
+<script>
+/* Dispara o movimento quando o bloco [data-anima] entra na tela; conta os números [data-contar] até o valor final. */
+(function () {
+  var anima = document.documentElement.classList.contains('anima');
+  var blocos = document.querySelectorAll('[data-anima]');
+  function formatar(v, casas) { return v.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas }); }
+  function contar(el, atraso) {
+    var alvo = parseFloat(el.dataset.contar), casas = parseInt(el.dataset.casas || '0', 10);
+    var pre = el.dataset.prefixo || '', suf = el.dataset.sufixo || '', final = el.textContent;
+    if (isNaN(alvo)) return;
+    var dur = 1100, t0 = null;
+    el.textContent = pre + formatar(0, casas) + suf;
+    function passo(t) {
+      if (t0 === null) t0 = t;
+      var p = Math.min((t - t0) / dur, 1), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = p < 1 ? pre + formatar(alvo * e, casas) + suf : final;
+      if (p < 1) requestAnimationFrame(passo);
+    }
+    setTimeout(function () { requestAnimationFrame(passo); }, atraso);
+  }
+  function ativar(bloco) {
+    if (bloco.classList.contains('ativo')) return;
+    bloco.classList.add('ativo');
+    if (anima) bloco.querySelectorAll('[data-contar]').forEach(function (el, i) { contar(el, i * 90); });
+  }
+  if (!anima) return;
+  if (!('IntersectionObserver' in window)) { blocos.forEach(ativar); return; }
+  var obs = new IntersectionObserver(function (itens) {
+    itens.forEach(function (i) { if (i.isIntersecting) { ativar(i.target); obs.unobserve(i.target); } });
+  }, { threshold: 0.25 });
+  blocos.forEach(function (b) { obs.observe(b); });
+})();
+</script>
+</body>
+</html>

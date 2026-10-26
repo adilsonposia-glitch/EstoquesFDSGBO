@@ -4,7 +4,7 @@ Aplicação local para ler a pasta da semana, recalcular a oferta de quinta a do
 
 A tela que vale é `visualizar/` (HTML, CSS e JavaScript). `template-mestre-main` foi só a referência visual. A marca é `LogoABB.jpeg`. A página abre nesta máquina, em `http://127.0.0.1:8765/visualizar/`, com a pasta do projeto servida na porta 8765. O repositório no GitHub guarda os arquivos; o link do GitHub não executa a capa.
 
-Regra revista em 22/10/2026. Quando a capa lê a pasta `Entrada Novo Período` e a semana anterior ainda está na raiz, a comparação de venda usa os arquivos diários das duas semanas. Essa comparação não usa ruptura. A regra de 20/10/2026 continua: o estoque de quinta e o de domingo vêm do arquivo de seis colunas, e a quantidade lida é `ESTOQUE_DTBASE`. A leitura dos pares de venda e de estoque dos produtos de oferta continua uma vez por período (seção 4.1). A regra de 17/10/2026 continua valendo: a oferta é `OfertasdoPeríodo.txt` e o denominador da participação é a soma dos quatro arquivos diários. Os números de venda da seção 10 permanecem. Os números de estoque foram reapurados em 20/10. A seção 10.1 é a comparação 08–11 contra 01–04, não a substituição da prova.
+Regra revista em 23/10/2026. Quando a pasta da semana tem `EstoqueInicio.txt` e `EstoqueFim.txt`, o saldo, a entrada e a saída saem só desses dois arquivos. A conta de cada linha é `QTDINICIAL` + `QTDENTRADA` − `QTDSAIDA` = `ESTOQUE`. Pedido e venda não entram nessa soma. Semana que ainda não tem esses dois arquivos continua na posição de seis colunas, e a entrada e a saída ficam em branco. A comparação de venda das duas semanas usa os arquivos diários e não usa ruptura. A leitura dos pares continua uma vez por período (seção 4.1). A oferta é `OfertasdoPeríodo.txt` e o denominador da participação é a soma dos quatro arquivos diários. Os números de venda da seção 10 permanecem. Os números de estoque publicados na seção 10 são o recálculo de 20/10. A seção 10.1 é a comparação 08–11 contra 01–04, não a substituição da prova.
 
 ## 1. Objetivo
 
@@ -76,9 +76,11 @@ Uma pasta fixa. As vendas levam a data no nome. Os demais nomes são estáveis.
 | `OfertasdoPeríodo.txt` | Itens em oferta. Venda da oferta em `VLRTOTALVDA`. O nome do arquivo traz `í` |
 | `dd-mm-aaaa.txt` (quatro arquivos) | Venda total da loja naquele dia. A data está no nome. Não é a oferta |
 | `Lojas.xlsx` | Venda total de outro recorte. Não é o denominador da participação |
-| `Estoque DDmmmAA.txt` da quinta | Posição de quinta. A quantidade é `ESTOQUE_DTBASE`. Exemplo: `Estoque 01Out26.txt` |
-| `Estoque DDmmmAA.txt` do domingo | Posição de domingo. A quantidade é `ESTOQUE_DTBASE`. Exemplo: `Estoque 04Out26.txt` |
-| `Entradas.txt` | Entradas do período, em unidade de venda. Continua na conta de saldo |
+| `EstoqueInicio.txt` | Saldo inicial, com partida, entrada e saída na mesma linha |
+| `EstoqueFim.txt` | Saldo final, com partida, entrada e saída na mesma linha |
+| `Estoque DDmmmAA.txt` | Posição, quando a pasta ainda não tem os dois arquivos acima. A quantidade é `ESTOQUE_DTBASE` |
+| `EstoqueDDmmm.txt` | Posição de sete colunas, sem espaço e sem ano no nome (`Estoque15Out.txt`). A quantidade é `EST_TOT`. Entra no lugar do arquivo de seis colunas |
+| `Entradas.txt` | Entradas do período, em unidade de venda. Não entra na conta do estoque |
 | `Dimproduto.txt` | Comprador e hierarquia `N1` a `N4` |
 | `Embalagem.txt` | Padrão de compra e de transferência |
 | `Auditoria de Cadastro.txt` | Fornecedor e código de barras |
@@ -86,7 +88,11 @@ Uma pasta fixa. As vendas levam a data no nome. Os demais nomes são estáveis.
 
 Formato dos TXT: separador `;`, decimal com vírgula, codificação Windows-1252. No estoque, a data-base vem em `DT_BASE`, no formato `aaaa-mm-dd-hh.mm.ss.ffffff`, e o nome do arquivo traz o dia: `Estoque 01Out26.txt` é 01/10/2026. Data `dd/mm/aaaa` nas entradas. Data `dd-mm-aaaa` no `Automatico.txt` e no arquivo de ofertas. Não há rodapé. A última linha é um registro.
 
-O estoque tem seis colunas, nesta ordem: `EMPRESA`, `NOME_EMPRESA`, `SEQPRODUTO`, `DESCCOMPLETA`, `ESTOQUE_DTBASE`, `DT_BASE`. Quinta e domingo usam o mesmo desenho. A quantidade dos dois é `ESTOQUE_DTBASE`. `DT_BASE` pode ser anterior ao dia do arquivo: é a última movimentação, e isso também ocorre em linha com saldo. A leitura não descarta essas linhas.
+`EstoqueInicio.txt` e `EstoqueFim.txt` têm sete colunas, nesta ordem: `NROEMPRESA`, `SEQPRODUTO`, `ULTDTAMOVIMENTO`, `QTDINICIAL`, `QTDENTRADA`, `QTDSAIDA`, `ESTOQUE`. A data é `dd/mm/aaaa`. Cada linha fecha: partida + entrada − saída = saldo. `ULTDTAMOVIMENTO` é o dia dessa linha e pode ser anterior à quinta. A leitura não descarta essas linhas.
+
+O arquivo de seis colunas, quando é ele que a pasta traz, continua nesta ordem: `EMPRESA`, `NOME_EMPRESA`, `SEQPRODUTO`, `DESCCOMPLETA`, `ESTOQUE_DTBASE`, `DT_BASE`. A quantidade é `ESTOQUE_DTBASE`. Nesse caso a entrada e a saída não são inventadas.
+
+O arquivo de posição de sete colunas (a partir de 26/10/2026) tem esta ordem: `EMPRESA`, `SEQPRODUTO`, `DESCRICAO`, `CUSTO_UN_BRUTO`, `EST_TOT`, `CUSTO_TOT_BRUTO`, `DATA_BASE`. O decimal é ponto e o milhar é vírgula (`1,368.00` é 1.368). A data é `aaaa-mm-dd-hh.mm.ss.ffffff`. O arquivo do primeiro dia traz o saldo inicial do período, com a venda desse dia já dentro. O arquivo do último dia traz o saldo final. A linha que não existe em um dos dois arquivos não vira saldo zero: o par fica sem posição. Na semana de 15 a 18/10 o arquivo do dia 18 não traz a central (70), e a tela da central avisa isso em vez de mostrar zeros.
 
 O arquivo de ofertas traz `NROSEGMENTO`. Os quatro arquivos de venda do dia não têm coluna de segmento. `NRODOCTOS` é a quantidade de documentos, não o segmento.
 
@@ -96,13 +102,15 @@ Chaves:
 - Produto: `IDPRODUTO` = `SEQPRODUTO` = `ID_PRODUTO`.
 - Comprador da análise: `Dimproduto.COMPRADOR`. A coluna `COMPRADOR` de `Automatico.txt` não identifica a pessoa.
 
+Ciclo das pastas (a partir de 26/10/2026). A semana nova fica em `Entrada Novo Período`. A semana anterior fica na raiz do projeto e serve à comparação de venda. A semana que sai da raiz vai para `Semanas anteriores\<período>`, com os arquivos intactos e com `Dimproduto.txt` e `Lojas.xlsx` junto, para a pasta poder ser aberta por **Escolher pasta**. Nesta data: `Entrada Novo Período` tem 15 a 18/10, a raiz tem 08 a 11/10 e `Semanas anteriores\01-04 Out 2026` guarda a semana de prova. Os arquivos de 08 a 11/10 que haviam sido sobrescritos na pasta nova (`OfertasdoPeríodo.txt`, `Entradas.txt`, `Automatico.txt`, `Embalagem.txt`) foram recuperados do último commit, com o mesmo tamanho em bytes que tinham antes.
+
 Na primeira execução o usuário indica a pasta. Nas seguintes, troca os arquivos e aperta **Atualizar**. O botão só calcula se a validação passar.
 
 Validação obrigatória:
 
 - quatro arquivos de venda, de quinta a domingo, em sequência;
 - cabeçalhos esperados;
-- um arquivo de estoque com a data de quinta no nome e outro com a data de domingo, no formato `Estoque DDmmmAA.txt`, com o cabeçalho das seis colunas;
+- `EstoqueInicio.txt` e `EstoqueFim.txt` juntos, com o cabeçalho das sete colunas; ou, na falta dos dois, um arquivo `Estoque DDmmmAA.txt` da quinta e outro do domingo, com o cabeçalho das seis colunas, ou um `EstoqueDDmmm.txt` de cada dia, com o cabeçalho das sete colunas de posição;
 - `DTRECEBIMENTO` de `Automatico.txt` e `DTAENTRADA` de `Entradas.txt` dentro dos quatro dias;
 - a pasta lida tem exatamente quatro arquivos de venda, de quinta a domingo. Duas semanas juntas na mesma pasta falham a validação;
 - linhas idênticas repetidas em `Entradas.txt` entram uma vez, e a tela mostra quantas foram descartadas;
@@ -120,9 +128,9 @@ Depois dessa apuração, mudança no projeto não atualiza de novo esses dados. 
 
 O total de venda da empresa fica destacado à parte, como o cartão da capa já faz. Ele serve para comparar com o total de venda da oferta e ver a participação da oferta na venda da empresa. Somente isso. Nas mudanças seguintes do mesmo período, não se reabre a venda linha a linha de item que não está na oferta.
 
-A leitura completa volta quando entra outro período: outros quatro dias, outro arquivo de ofertas, outros estoques. Nesse período novo, de novo uma vez só. O estoque de quinta é o arquivo `Estoque DDmmmAA.txt` dessa quinta, e o de domingo é o arquivo do domingo. Os dois trazem `ESTOQUE_DTBASE`.
+A leitura completa volta quando entra outro período: outros quatro dias, outro arquivo de ofertas, outros estoques. Nesse período novo, de novo uma vez só. O estoque da semana é `EstoqueInicio.txt` e `EstoqueFim.txt`. Sem esses dois arquivos, a posição fica em `Estoque DDmmmAA.txt` e a entrada e a saída ficam em branco.
 
-Em 20/10/2026 essa fonte substituiu `QTDINICIAL` e `ESTOQUE` dos TXT antigos. A participação continua sendo a venda da oferta dividida pela venda da empresa. Os números de venda da seção 10 permanecem. Os números de estoque são os da nova leitura.
+Em 23/10/2026 a conta do saldo passou a usar `QTDINICIAL`, `QTDENTRADA`, `QTDSAIDA` e `ESTOQUE` desses dois arquivos. A participação continua sendo a venda da oferta dividida pela venda da empresa. Os números de venda da seção 10 permanecem. Os números de estoque publicados na seção 10 permanecem os de 20/10.
 
 ## 5. Regras de cálculo
 
@@ -152,26 +160,31 @@ A participação da rede usa as mesmas duas somas. Nesta semana de prova: R$ 6.8
 
 ### 5.3 Saldo
 
-Conta de apoio, em quantidade:
+O saldo vem de um lugar só. Com `EstoqueInicio.txt` e `EstoqueFim.txt` na pasta, a quantidade é a coluna `ESTOQUE`. A entrada é `QTDENTRADA` e a saída é `QTDSAIDA` da mesma linha. A conta de cada linha é:
 
-`ESTOQUE_DTBASE` de quinta + `QTDITEM` das entradas de quinta a domingo − quantidade vendida nos quatro dias.
+`QTDINICIAL` + `QTDENTRADA` − `QTDSAIDA` = `ESTOQUE`.
 
-O resultado se compara a `ESTOQUE_DTBASE` de domingo.
+Essa conta vale no arquivo inicial e no arquivo fim, cada um no seu `ULTDTAMOVIMENTO`. A entrada e a saída do arquivo inicial já estão dentro do estoque inicial. Não se somam de novo por cima desse saldo. A entrada e a saída do arquivo fim já estão dentro do estoque fim.
 
-Sell-through da oferta = quantidade vendida dividida por (saldo de quinta + entradas).
+O intervalo é a partida do estoque fim menos o estoque inicial. Quando ele é zero, a linha final continua o saldo inicial. Quando ele não é zero, os dois arquivos não trazem as linhas dos dias do meio. Esse intervalo não vira entrada e não vira saída.
 
-O arquivo de estoque não traz `QTDSAIDA`. A conta oficial de abastecimento usa a quantidade vendida.
+A quantidade recebida do pedido fica nas colunas automática e manual. A quantidade vendida fica na coluna da venda. Nenhuma das duas entra na soma do estoque.
 
-Nas operações 802, 902 e 903 de `Entradas.txt`, `QTDITEM` vem zerado. Essa quantidade não entra na conta.
+Pasta sem `EstoqueInicio.txt` e `EstoqueFim.txt` usa a coluna `ESTOQUE_DTBASE`. A do arquivo do primeiro dia é o estoque inicial do período. A do arquivo do último dia é o estoque final. A venda do dia do saldo inicial já está dentro desse saldo. A conta soma só os dias posteriores a essa data, até a data do estoque final: entrada `QTDITEM`, menos a saída das operações 802, 902 e 903, menos a quantidade vendida. O resultado se compara ao estoque final. Diferença que não está nos arquivos não vira saída.
 
-### 5.4 Abastecimento irregular
+A variação do estoque é o estoque final menos o inicial, dividido pelo inicial. Percentual positivo: o saldo terminou maior. Percentual negativo: o saldo terminou menor. Não há corte inventado para “entrou demais” ou “entrou de menos”. A ordenação dessa coluna mostra os extremos.
 
-Irregular é todo par loja + produto da oferta em que o saldo de domingo é maior que o saldo de quinta, com ou sem venda.
+Os números de estoque publicados na seção 10 permanecem os reapurados em 20/10. Esta conta vale para a semana aberta na capa.
 
-A exceção fica em relatório separado, em dois grupos:
+### 5.4 Conta aberta e sem entrada
 
-- o saldo subiu e não houve entrada;
-- o saldo subiu e a entrada existiu, mas foi menor do que o aumento.
+Conta aberta é o par loja + produto em que partida + entrada − saída não chega no `ESTOQUE` da própria linha, no arquivo inicial ou no arquivo fim.
+
+Sem entrada é o par em que o estoque fim ficou maior que o inicial e a `QTDENTRADA` do estoque fim, em dia da semana e posterior ao movimento inicial, está zerada. O pedido não conta como essa entrada.
+
+A entrada insuficiente fica no caso em que as duas linhas se encadeiam, o saldo subiu, houve `QTDENTRADA` na linha final e essa entrada foi menor do que o aumento.
+
+Sem os dois arquivos de movimento, conta aberta e sem entrada ficam sem leitura. Não se completa com `Entradas.txt`.
 
 ### 5.5 Ruptura
 
@@ -181,7 +194,7 @@ A exceção fica em relatório separado, em dois grupos:
 
 ### 5.6 Central 70
 
-A central entra sem venda. A queda de saldo além das entradas é a saída para as lojas, que não tem arquivo próprio.
+A central entra sem venda. A saída escrita no estoque da central é a `QTDSAIDA` do último movimento. Não há arquivo separado de transferência de saída. Quando os arquivos de estoque não trazem a central nos dois dias, a tela avisa e não calcula transferência nem compra.
 
 Causa da falta na rede:
 
@@ -224,9 +237,9 @@ Produto nas duas sistemáticas em lojas diferentes não entra nessa comparação
 
 A coluna exibida de entrada automática e a de entrada manual somam `QTDRECEBIDA` de `Automatico.txt` (posição 18), por loja e produto. A modalidade usa a mesma coluna `COMPRADOR` da seção 5.7. Uma modalidade conta para o par quando a quantidade recebida passa de 0,05.
 
-A conta de saldo, o irregular e a exceção continuam em `Entradas.txt`, coluna `QTDITEM`. Trocar a coluna exibida não altera essa conta.
+A conta do saldo, a conta aberta e a sem entrada usam `EstoqueInicio.txt` e `EstoqueFim.txt`. A quantidade recebida do pedido não entra nessa conta.
 
-`Entradas.txt` pode estar zerado num par que tem `QTDRECEBIDA` maior que zero. Exemplo na loja 5, queijo prato peça kg (11029): automático 21,31 e manual 101,49, com `QTDITEM` zerado.
+Um par pode ter `QTDRECEBIDA` maior que zero e `QTDENTRADA` zerada no estoque. O pedido não substitui a entrada escrita no estoque.
 
 ### 5.10 Nome da oferta e segmento
 
@@ -281,6 +294,8 @@ A tabela de percentuais tem uma linha por comprador, loja, produto, departamento
 **Central.** Saldo da 70 e o cruzamento com a loja zerada.
 
 **Qualidade dos arquivos.** Linhas lidas, período, lojas ignoradas, produtos sem estoque, saldo negativo, linhas repetidas de entrada e valores de sistemática não reconhecidos.
+
+**Resumo executivo para os sócios.** Página à parte, em `relatorios/resumo_executivo_oferta_fds.html`, no padrão da skill `supermarket-visual`. Abre com duplo clique, sem servidor. Segue início, meio e fim: a semana de 08 a 11/10 como régua (com 01 a 04/10 numa tabela das três semanas), o que mudou em 15 a 18/10 (oferta, participação por loja, produtos que repetiram, estreantes, compradores, estoque lido pelos arquivos de posição) e o que decidir. Regenerada em 26/10/2026 para 15 a 18 contra 08 a 11. Inclui o percentual de abastecimento automático e manual por comprador e por departamento, nas duas semanas e com a variação em pontos percentuais. O percentual é o de linhas de pedido de revenda (seção 5.7): automático ÷ (automático + manual). Percentual automático maior indica menos intervenção manual. Todos os números saem do mesmo cálculo da capa. A página não traz meta nem corte que não esteja nos arquivos, e lista os limites da leitura. Ruptura não entra na comparação entre as semanas.
 
 ## 7. Marca e template
 
@@ -372,6 +387,20 @@ A participação caiu nas 13 lojas. As maiores quedas em pontos: Pedra 69,4% par
 
 Esses números não substituem a seção 10. A prova de 01 a 04 permanece.
 
+### 10.2 Comparação 15–18 contra 08–11
+
+A capa de 26/10 lê `Entrada Novo Período` (15 a 18/10/2026) e compara com a raiz (08 a 11/10/2026). A semana de 08 a 11/10 reproduz os números da seção 10.1 depois da mudança de pastas (1.130 produtos, R$ 5.141.303,80, 47,37%, 10.135 pares com as duas linhas, ruptura 560, sem entrada 713). A semana de 01 a 04/10, arquivada, reproduz a seção 10 (2.665 produtos, R$ 6.816.656,97, 58,02%, ruptura 3.132, provável 131, sem entrada 28).
+
+Semana de 15 a 18/10. Oferta de 2.545 produtos e `VLRTOTALVDA` de 5.734.977,39 (+11,55% sobre a semana anterior). Venda total das lojas 10.373.687,14 (−4,42%). Participação 55,28% (47,37% antes). A participação subiu nas 13 lojas. As maiores altas em pontos: Barra 26,4% para 40,6% (+14,2), Abelardo 39,2% para 52,1% (+12,9), depois Tanque 49,4% para 58,3% (+8,9) e Cascadura 53,1% para 62,0% (+8,9). A menor alta foi a do Terreirão, 55,0% para 56,1% (+1,1).
+
+852 produtos repetiram, 1.693 estrearam e 278 saíram da oferta. A venda diária dos 852 repetidos foi de 4.822.586,56 para 4.579.801,38, diferença de −242.785,18 (−5,03%). Desses, 290 venderam mais, 444 venderam menos, 112 não venderam nas duas semanas e 5 passaram a vender. Os 1.693 estreantes venderam 1.252.832,80, e 355 não venderam. Nenhum dos números desta comparação usa ruptura.
+
+Abastecimento: 28,31% das linhas de revenda da oferta foram automáticas (1.442 automáticas e 3.652 manuais), contra 19,08% em 08 a 11/10 (537 e 2.278).
+
+Estoque, pela posição de `EST_TOT`. Dos 33.085 pares loja + produto da oferta, 10.239 têm as duas linhas (dia 15 e dia 18), 12.814 têm a linha do dia 18 e 13.966 a do dia 15. Entre os 10.239: o saldo terminou menor em 9.172, maior em 1.053 e igual em 14. A conta pela movimentação (saldo do dia 15 + entrada − saída − venda de 16, 17 e 18) fecha em 8.410 pares e fica aberta em 1.829: em 1.698 o saldo do arquivo ficou abaixo da conta e em 131 ficou acima. A diferença não é atribuída a causa nenhuma, porque não há arquivo de transferência de saída nem de quebra. Pares com venda e sem linha no dia 18: 5.837 de 18.616. Pares só no dia 15 com saldo positivo: 3.462 (na oferta, nas 13 lojas). A linha ausente não é tratada como saldo zero. A tela da central não calcula, porque o dia 18 não traz a empresa 70. Ruptura pelo saldo do dia 18: 112. Saldo negativo: 509. Ruptura provável: 310. Sem entrada: 57. Esses valores de estoque cobrem só os pares com linha e não são comparáveis com os de 08 a 11/10, que vêm do arquivo de movimento.
+
+Arroz 12269, loja 12: 437 + 2 − 0 − 77 = 362, e o arquivo do dia 18 traz 359. A diferença de 3 fica aberta.
+
 ## 11. Ordem de construção
 
 1. A capa de `visualizar/` já calcula a semana de prova e reproduz a seção 10.
@@ -380,4 +409,4 @@ Esses números não substituem a seção 10. A prova de 01 a 04 permanece.
 
 ## 12. Pronto quando
 
-O usuário abre `http://127.0.0.1:8765/visualizar/`, espera a leitura terminar e responde, na capa, as perguntas da seção 1. A semana de 01 a 04/10/2026 reproduz a seção 10.
+O usuário abre `http://127.0.0.1:8765/visualizar/`, espera a leitura terminar e responde, na capa, as perguntas da seção 1. A semana de 01 a 04/10/2026 reproduz a seção 10, aberta pela pasta `Semanas anteriores\01-04 Out 2026`.

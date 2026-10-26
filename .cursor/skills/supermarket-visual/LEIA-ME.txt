@@ -1,0 +1,15 @@
+SKILL supermarket-visual (versão para Cursor)
+
+Instalação
+1. Copie a pasta "supermarket-visual" para a pasta .cursor/skills/ na raiz do seu projeto
+   (resultado: .cursor/skills/supermarket-visual/SKILL.md).
+   Para usar em todos os projetos, copie para ~/.cursor/skills/ no lugar disso.
+2. Reabra o Cursor e confira se a skill aparece nas configurações de Skills.
+3. No chat do agente, digite / e escolha supermarket-visual, ou peça um relatório de
+   venda, margem ou mercadológico e deixe o agente usá-la.
+
+Resultado
+As páginas geradas são salvas em HTML na pasta relatorios/ do projeto e abrem direto no navegador.
+
+Requisito
+Python 3 (só biblioteca padrão) para o script scripts/embed_logos.py.

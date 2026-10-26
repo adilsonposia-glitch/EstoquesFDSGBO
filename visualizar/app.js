@@ -1,4 +1,4 @@
-import { analyze, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=19";
+import { analyze, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=36";
 
 const VIEWS = [
   ["capa", "Capa"],
@@ -6,7 +6,7 @@ const VIEWS = [
   ["compradores", "Compradores"],
   ["ruptura", "Ruptura"],
   ["sem-venda", "Sem venda"],
-  ["irregular", "Abastecimento irregular"],
+  ["irregular", "Conta aberta"],
   ["excecao", "Exceção"],
   ["datas", "Datas"],
   ["central", "Central"],
@@ -15,6 +15,9 @@ const VIEWS = [
 
 const state = {
   view: "capa",
+  qual: "periodo",
+  rotuloPeriodo: "",
+  rotuloRaiz: "",
   foco: "comprador",
   detalheTitulo: "",
   result: null,
@@ -83,9 +86,27 @@ function parte(quantidade, base) {
   if (quantidade === base) return "total";
   return pct(quantidade / base);
 }
-function relacaoEstoque(row) {
+function variacaoEstoque(row) {
   if (row.inicial == null || row.final == null || Math.abs(row.inicial) < 0.05) return null;
-  return row.final / row.inicial;
+  return (row.final - row.inicial) / row.inicial;
+}
+function pctSinal(value) {
+  if (value == null || Number.isNaN(value)) return "—";
+  const base = pct(Math.abs(value));
+  if (value > 0.0000001) return `+${base}`;
+  if (value < -0.0000001) return `−${base}`;
+  return base;
+}
+function dataBr(iso) {
+  if (!iso || !iso.includes("-")) return "";
+  return iso.split("-").reverse().join("/");
+}
+function equacaoEstoque(partida, entrada, saida, saldo, data) {
+  if (partida == null || saldo == null) {
+    return saldo == null ? "" : "Posição do arquivo de estoque. Esta pasta não traz entrada e saída.";
+  }
+  const quando = dataBr(data);
+  return `${quando ? `${quando} · ` : ""}${qty(partida)} + ${qty(entrada)} − ${qty(saida)} = ${qty(saldo)}`;
 }
 function compareValues(a, b) {
   if (a == null && b == null) return 0;
@@ -102,7 +123,13 @@ function sortRows(rows, columns) {
 }
 function sortMark(key) {
   if (state.sortKey !== key) return "";
-  return state.sortDir === "asc" ? " ↑" : " ↓";
+  const simbolo = state.sortDir === "asc" ? "↑" : "↓";
+  return `<span class="sort-seta ativo">${simbolo}</span>`;
+}
+function sortSeta(key) {
+  const ativo = state.sortKey === key;
+  const simbolo = !ativo ? "↕" : state.sortDir === "asc" ? "↑" : "↓";
+  return `<span class="sort-seta${ativo ? " ativo" : ""}">${simbolo}</span>`;
 }
 function capaOrdem(row, info) {
   if (state.sortKey === "nome") return row.nome || row.comprador || `${row.produto} ${row.descricao}`;
@@ -128,12 +155,19 @@ function diaCurto(text) {
 
 const MESES = { jan: "01", fev: "02", mar: "03", abr: "04", mai: "05", jun: "06", jul: "07", ago: "08", set: "09", out: "10", nov: "11", dez: "12" };
 
+// Aceita "Estoque 01Out26.txt" (com ano) e "Estoque15Out.txt" (sem espaço e sem ano).
+// Sem ano, devolve "15-10-" e o dia da venda completa o resto.
 function stockFileDate(name) {
-  const match = String(name).match(/^estoque\s+(\d{2})([a-z]{3})(\d{2})\.txt$/i);
+  const match = String(name).match(/^estoque\s*(\d{2})([a-z]{3})(\d{2})?\.txt$/i);
   if (!match) return "";
   const month = MESES[match[2].toLowerCase()];
   if (!month) return "";
-  return `${match[1]}-${month}-20${match[3]}`;
+  return match[3] ? `${match[1]}-${month}-20${match[3]}` : `${match[1]}-${month}-`;
+}
+
+function estoqueDoDia(stockDate, salesDate) {
+  if (!stockDate || !salesDate) return false;
+  return stockDate.endsWith("-") ? salesDate.startsWith(stockDate) : stockDate === salesDate;
 }
 
 const SEMANAS_KEY = "fds-oferta-semanas";
@@ -227,7 +261,7 @@ async function collectFromDirectory(dir) {
       found.buffers.ofertas = handle;
       continue;
     }
-    if (["entradas.txt", "dimproduto.txt", "automatico.txt", "lojas.xlsx"].includes(key)) {
+    if (["entradas.txt", "dimproduto.txt", "automatico.txt", "lojas.xlsx", "estoqueinicio.txt", "estoquefim.txt"].includes(key)) {
       found.buffers[key] = handle;
     }
   }
@@ -283,12 +317,23 @@ async function loadFromListing(base, discovered) {
     if (!response.ok) throw new Error(`Arquivo ausente: ${name}`);
     return decode(await response.arrayBuffer());
   }
-  const inicioName = discovered.names.find((name) => stockFileDate(name) === discovered.found.sales[0]);
-  const fimName = discovered.names.find((name) => stockFileDate(name) === discovered.found.sales[discovered.found.sales.length - 1]);
-  if (!inicioName) throw new Error(`Falta o estoque de ${discovered.found.sales[0]}.`);
-  if (!fimName) throw new Error(`Falta o estoque de ${discovered.found.sales[discovered.found.sales.length - 1]}.`);
-  const inicio = await textFile(inicioName);
-  const fim = await textFile(fimName);
+  const inicioMov = discovered.names.find((name) => name.toLowerCase() === "estoqueinicio.txt");
+  const fimMov = discovered.names.find((name) => name.toLowerCase() === "estoquefim.txt");
+  let inicio;
+  let fim;
+  if (inicioMov && fimMov) {
+    inicio = await textFile(inicioMov);
+    fim = await textFile(fimMov);
+  } else if (inicioMov || fimMov) {
+    throw new Error("A pasta precisa ter o estoque inicial e o estoque fim juntos.");
+  } else {
+    const inicioName = discovered.names.find((name) => estoqueDoDia(stockFileDate(name), discovered.found.sales[0]));
+    const fimName = discovered.names.find((name) => estoqueDoDia(stockFileDate(name), discovered.found.sales[discovered.found.sales.length - 1]));
+    if (!inicioName) throw new Error(`Falta o estoque de ${discovered.found.sales[0]}.`);
+    if (!fimName) throw new Error(`Falta o estoque de ${discovered.found.sales[discovered.found.sales.length - 1]}.`);
+    inicio = await textFile(inicioName);
+    fim = await textFile(fimName);
+  }
   const entradas = await textFile("Entradas.txt");
   const dim = await textFile("Dimproduto.txt");
   const automatico = await textFile("Automatico.txt");
@@ -302,8 +347,13 @@ async function loadFromListing(base, discovered) {
   return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
 }
 
-async function loadServerFiles() {
+async function loadServerFiles(qual) {
   const nova = `../${encodeURIComponent("Entrada Novo Período")}/`;
+  if (qual === "raiz") {
+    state.qual = "raiz";
+    return loadFromListing("../", await collectListing("../"));
+  }
+  state.qual = "periodo";
   let base = "../";
   let discovered = null;
   try {
@@ -316,6 +366,7 @@ async function loadServerFiles() {
     base = "../";
   }
   if (!discovered) discovered = await collectListing(base);
+  if (base === "../") state.qual = "raiz";
   if (base !== "../") await lembrarSemanaDaRaiz();
   const files = await loadFromListing(base, discovered);
   if (base !== "../") files.anterior = await vendaDaRaiz();
@@ -466,14 +517,29 @@ async function loadDirectory(dir) {
     setProgress(0.45, `Lendo ${name}`);
     return handle;
   }
-  const inicioItem = found.stocks.find((item) => item.date === sales[0].date);
-  const fimItem = found.stocks.find((item) => item.date === sales[sales.length - 1].date);
-  if (!sales.length || !inicioItem) throw new Error(sales.length ? `Falta o estoque de ${sales[0].date}.` : "A pasta precisa ter quatro arquivos de venda, de quinta a domingo.");
-  if (!fimItem) throw new Error(`Falta o estoque de ${sales[sales.length - 1].date}.`);
-  setProgress(0.45, `Lendo estoque de ${inicioItem.date}`);
-  const inicio = decode(await readHandle(inicioItem.handle));
-  setProgress(0.5, `Lendo estoque de ${fimItem.date}`);
-  const fim = decode(await readHandle(fimItem.handle));
+  const inicioHandle = found.buffers["estoqueinicio.txt"];
+  const fimHandle = found.buffers["estoquefim.txt"];
+  let inicio;
+  let fim;
+  if (inicioHandle && fimHandle) {
+    setProgress(0.45, "Lendo estoque inicial");
+    inicio = decode(await readHandle(inicioHandle));
+    setProgress(0.5, "Lendo estoque fim");
+    fim = decode(await readHandle(fimHandle));
+  } else if (inicioHandle || fimHandle) {
+    throw new Error("A pasta precisa ter o estoque inicial e o estoque fim juntos.");
+  } else if (!sales.length) {
+    throw new Error("A pasta precisa ter quatro arquivos de venda, de quinta a domingo.");
+  } else {
+    const inicioItem = found.stocks.find((item) => estoqueDoDia(item.date, sales[0].date));
+    const fimItem = found.stocks.find((item) => estoqueDoDia(item.date, sales[sales.length - 1].date));
+    if (!sales.length || !inicioItem) throw new Error(sales.length ? `Falta o estoque de ${sales[0].date}.` : "A pasta precisa ter quatro arquivos de venda, de quinta a domingo.");
+    if (!fimItem) throw new Error(`Falta o estoque de ${sales[sales.length - 1].date}.`);
+    setProgress(0.45, `Lendo estoque de ${inicioItem.date}`);
+    inicio = decode(await readHandle(inicioItem.handle));
+    setProgress(0.5, `Lendo estoque de ${fimItem.date}`);
+    fim = decode(await readHandle(fimItem.handle));
+  }
   const entradas = decode(await readHandle(await required("Entradas.txt")));
   const dim = decode(await readHandle(await required("Dimproduto.txt")));
   const automatico = decode(await readHandle(await required("Automatico.txt")));
@@ -483,6 +549,18 @@ async function loadDirectory(dir) {
   const lojasHandle = await required("Lojas.xlsx");
   const lojas = await lojasFromXlsx(await readHandle(lojasHandle));
   return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
+}
+
+function marcarSemanas() {
+  const periodo = document.querySelector("#semana-periodo");
+  const raiz = document.querySelector("#semana-raiz");
+  if (!periodo || !raiz) return;
+  periodo.hidden = !state.rotuloPeriodo;
+  raiz.hidden = !state.rotuloRaiz;
+  periodo.textContent = state.rotuloPeriodo;
+  raiz.textContent = state.rotuloRaiz;
+  periodo.setAttribute("aria-pressed", state.qual === "periodo" ? "true" : "false");
+  raiz.setAttribute("aria-pressed", state.qual === "raiz" ? "true" : "false");
 }
 
 async function run(loader) {
@@ -504,7 +582,16 @@ async function run(loader) {
       state.repeticao = "";
     }
     guardarSemana(result);
-    setProgress(1, `Semana ${result.periodo[0]} a ${result.periodo[3]}. ${result.quality.produtosOferta.toLocaleString("pt-BR")} produtos de oferta.`);
+    const origem = result.quality.movimento
+      ? "Estoque lido no arquivo inicial e no arquivo fim."
+      : "Estoque inicial no arquivo do primeiro dia e estoque final no arquivo do último dia.";
+    if (state.qual === "raiz") state.rotuloRaiz = `${diaCurto(result.periodo[0])} a ${diaCurto(result.periodo[3])}`;
+    else {
+      state.rotuloPeriodo = `${diaCurto(result.periodo[0])} a ${diaCurto(result.periodo[3])}`;
+      if (state.anterior) state.rotuloRaiz = `${diaCurto(state.anterior.inicio)} a ${diaCurto(state.anterior.fim)}`;
+    }
+    marcarSemanas();
+    setProgress(1, `Semana ${result.periodo[0]} a ${result.periodo[3]}. ${result.quality.produtosOferta.toLocaleString("pt-BR")} produtos de oferta. ${origem}`);
     render();
   } catch (error) {
     setProgress(0, error.message || "Não foi possível ler a pasta.");
@@ -582,17 +669,57 @@ function table(columns, rows) {
   const sorted = sortRows(rows, columns);
   const start = state.page * state.pageSize;
   const pageRows = sorted.slice(start, start + state.pageSize);
-  const head = columns.map((column) => `<th class="${column.num ? "num" : ""}"><button type="button" class="sort" data-sort="${column.key}">${column.label}${sortMark(column.key)}</button></th>`).join("");
+  const head = columns.map((column) => `<th class="${column.num ? "num" : ""} col-${column.key}"><button type="button" class="sort${state.sortKey === column.key ? " ativo" : ""}" data-sort="${column.key}"><span class="sort-label">${column.label}</span>${sortSeta(column.key)}</button></th>`).join("");
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const body = pageRows.map((row) => `<tr>${columns.map((column) => `<td class="${column.num ? "num" : ""}">${esc(column.cell(row))}</td>`).join("")}</tr>`).join("");
+  const attr = (value) => esc(value).replace(/"/g, "&quot;");
+  const body = pageRows.map((row) => `<tr>${columns.map((column) => {
+    const texto = esc(column.cell(row));
+    const dica = column.hint ? column.hint(row) : "";
+    const longo = column.key === "descricao" || column.key === "loja" || column.key === "comprador";
+    const titulo = dica || (longo ? column.cell(row) : "");
+    return `<td class="${column.num ? "num" : ""} col-${column.key}"${titulo ? ` title="${attr(titulo)}"` : ""}>${texto}</td>`;
+  }).join("")}</tr>`).join("");
   const pages = Math.max(1, Math.ceil(sorted.length / state.pageSize));
-  const fullLabel = document.fullscreenElement ? "Sair da tela cheia" : "Tela cheia";
+  const fullLabel = document.fullscreenElement || state.keepFull ? "Sair da tela cheia" : "Tela cheia";
+  const cols = columns.map((column) => `<col class="col-${column.key}">`).join("");
   return `
     <div class="panel" id="panel">
       <div class="panel-bar"><button type="button" id="fullscreen">${fullLabel}</button></div>
-      <div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
+      <div class="table-wrap"><table><colgroup>${cols}</colgroup><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
       <div class="pager"><span>${sorted.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
     </div>`;
+}
+
+function place(html) {
+  const current = document.querySelector("#panel");
+  const staying = Boolean(current && (document.fullscreenElement === current || current.classList.contains("expanded")));
+  if (!staying) {
+    view.innerHTML = html;
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  const next = holder.querySelector("#panel");
+  if (!next) {
+    view.innerHTML = html;
+    return;
+  }
+  const before = [];
+  const after = [];
+  let seen = false;
+  for (const node of [...holder.childNodes]) {
+    if (node === next) {
+      seen = true;
+      continue;
+    }
+    (seen ? after : before).push(node);
+  }
+  current.replaceChildren(...next.childNodes);
+  [...view.childNodes].forEach((node) => {
+    if (node !== current) node.remove();
+  });
+  for (const node of before) view.insertBefore(node, current);
+  for (const node of after) view.appendChild(node);
 }
 
 function bindFilters(rows) {
@@ -638,41 +765,88 @@ function bindFullscreen() {
   const button = document.querySelector("#fullscreen");
   if (!panel || !button) return;
   const wrap = panel.querySelector(".table-wrap");
+  if (state.keepFull) panel.classList.add("expanded");
   const overflows = wrap && wrap.scrollWidth > wrap.clientWidth + 4;
   const leave = () => {
+    state.keepFull = false;
     panel.classList.remove("expanded");
     button.textContent = "Tela cheia";
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   };
   const enter = () => {
-    panel.requestFullscreen().then(() => {
-      button.textContent = "Sair da tela cheia";
-    }).catch(() => {
-      panel.classList.add("expanded");
-      button.textContent = "Sair da tela cheia";
-    });
+    state.keepFull = true;
+    panel.classList.add("expanded");
+    button.textContent = "Sair da tela cheia";
+    if (document.fullscreenElement === panel) return;
+    const pedido = panel.requestFullscreen?.();
+    if (pedido && typeof pedido.catch === "function") pedido.catch(() => {});
   };
-  button.hidden = !overflows && !state.keepFull;
+  button.hidden = !overflows && !state.keepFull && !panel.classList.contains("expanded");
   button.onclick = () => {
     if (document.fullscreenElement || panel.classList.contains("expanded")) leave();
     else enter();
   };
-  if (state.keepFull) enter();
+  if (state.keepFull) {
+    button.textContent = "Sair da tela cheia";
+    if (document.fullscreenElement !== panel) enter();
+  }
+}
+
+function colunaVariacao() {
+  return {
+    key: "variacao",
+    label: "Variação do estoque",
+    num: true,
+    value: (row) => variacaoEstoque(row),
+    cell: (row) => pctSinal(variacaoEstoque(row)),
+    hint: (row) => {
+      if (row.inicial == null || row.final == null) return "";
+      const conta = row.conta == null ? "" : ` Depois do saldo inicial: entrada ${qty(row.entradaMov)}, saída ${qty(row.saidaMov)}, venda ${qty(row.vendaMov)}. Conta ${qty(row.conta)}.`;
+      return `Estoque final ${qty(row.final)} menos o inicial ${qty(row.inicial)}, dividido pelo inicial.${conta}`;
+    },
+  };
 }
 
 function detailColumns() {
-  return [
+  const pedido = () => "Quantidade recebida no pedido. Não entra na soma do estoque.";
+  const movimento = Boolean(state.result?.quality.movimento);
+  const comuns = [
     { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
     { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
-    { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
-    { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial) },
-    { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica) },
-    { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual) },
-    { key: "venda", label: "Venda (quant)", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade) },
-    { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final) },
-    { key: "saldo", label: "Final / inicial", num: true, value: (row) => relacaoEstoque(row), cell: (row) => { const valor = relacaoEstoque(row); return valor == null ? "—" : pct(valor); } },
-    { key: "cobertura", label: "Cobertura", num: true, value: (row) => row.cobertura, cell: (row) => row.cobertura == null ? "—" : `${qty(row.cobertura)} d` },
+  ];
+  const variacao = colunaVariacao();
+  if (!movimento) {
+    return [
+      ...comuns,
+      { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial), hint: (row) => `Saldo do arquivo do primeiro dia, já em ${dataBr(row.dataInicial)}. A venda desse dia já está neste número.` },
+      { key: "entrada-mov", label: "Entrada depois", num: true, value: (row) => row.entradaMov, cell: (row) => qty(row.entradaMov), hint: (row) => row.entradaTexto || "QTDITEM dos dias posteriores ao saldo inicial." },
+      { key: "saida-mov", label: "Saída depois", num: true, value: (row) => row.saidaMov, cell: (row) => qty(row.saidaMov), hint: (row) => row.saidaTexto || "QTDITEM das operações 802, 902 e 903 nesses dias." },
+      { key: "venda-mov", label: "Venda depois", num: true, value: (row) => row.vendaMov, cell: (row) => qty(row.vendaMov), hint: () => "Quantidade vendida nos dias posteriores ao saldo inicial, até a data do estoque final." },
+      { key: "conta", label: "Estoque pela movimentação", num: true, value: (row) => row.conta, cell: (row) => qty(row.conta), hint: () => "Estoque inicial + entrada depois − saída depois − venda depois." },
+      { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
+      { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
+      { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final), hint: (row) => `Saldo do arquivo do último dia, na data ${dataBr(row.dataFinal)}.` },
+      variacao,
+    ];
+  }
+  return [
+    ...comuns,
+    { key: "partida-ini", label: "Partida inicial", num: true, value: (row) => row.partidaInicial, cell: (row) => qty(row.partidaInicial), hint: (row) => dataBr(row.dataInicial) },
+    { key: "entrada-ini", label: "Entrada inicial", num: true, value: (row) => row.entradaInicial, cell: (row) => qty(row.entradaInicial), hint: (row) => dataBr(row.dataInicial) },
+    { key: "saida-ini", label: "Saída inicial", num: true, value: (row) => row.saidaInicial, cell: (row) => qty(row.saidaInicial), hint: (row) => dataBr(row.dataInicial) },
+    { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial), hint: (row) => equacaoEstoque(row.partidaInicial, row.entradaInicial, row.saidaInicial, row.inicial, row.dataInicial) },
+    { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
+    { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
+    { key: "venda", label: "Quantidade vendida", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade), hint: () => "Quantidade dos quatro arquivos diários. A venda do dia do saldo inicial já está dentro desse saldo." },
+    { key: "partida-fim", label: "Partida final", num: true, value: (row) => row.partidaFinal, cell: (row) => qty(row.partidaFinal), hint: (row) => dataBr(row.dataFinal) },
+    { key: "entrada-fim", label: "Entrada final", num: true, value: (row) => row.entradaFinal, cell: (row) => qty(row.entradaFinal), hint: (row) => dataBr(row.dataFinal) },
+    { key: "saida-fim", label: "Saída final", num: true, value: (row) => row.saidaFinal, cell: (row) => qty(row.saidaFinal), hint: (row) => dataBr(row.dataFinal) },
+    { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final), hint: (row) => equacaoEstoque(row.partidaFinal, row.entradaFinal, row.saidaFinal, row.final, row.dataFinal) },
+    { key: "venda-mov", label: "Venda depois", num: true, value: (row) => row.vendaMov, cell: (row) => qty(row.vendaMov), hint: () => "Venda dos dias posteriores ao saldo inicial, até a data do estoque final. A venda do dia inicial já está no saldo." },
+    { key: "conta", label: "Estoque pela movimentação", num: true, value: (row) => row.conta, cell: (row) => qty(row.conta), hint: () => "Estoque inicial + entrada desses dias − saída desses dias − venda desses dias." },
+    { key: "intervalo", label: "Intervalo", num: true, value: (row) => row.intervalo, cell: (row) => qty(row.intervalo), hint: () => "Partida do estoque fim menos o estoque inicial. Os dois arquivos não detalham os dias entre as datas." },
+    variacao,
   ];
 }
 
@@ -702,7 +876,7 @@ const CAPA_METRICS = [
   ["ambos", "Dois abas.", (row) => row.comAbastecimento ? row.ambos / row.comAbastecimento : 0, (row) => row.comAbastecimento, (row) => row.ambos],
   ["provavel", "Ruptura provável", (row) => row.comVenda ? row.provavel / row.comVenda : 0, (row) => row.comVenda, (row) => row.provavel],
   ["ruptura", "Ruptura", (row) => row.comPosicao ? row.ruptura / row.comPosicao : 0, (row) => row.comPosicao, (row) => row.ruptura],
-  ["excesso", "Excesso de estoque", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares, (row) => row.irregular],
+  ["excesso", "Conta aberta", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares, (row) => row.irregular],
   ["sem-venda", "Sem venda com saldo", (row) => row.pares ? row.semVendaSaldo / row.pares : 0, (row) => row.pares, (row) => row.semVendaSaldo],
   ["sem-entrada", "Sem entrada", (row) => row.pares ? row.excecaoSem / row.pares : 0, (row) => row.pares, (row) => row.excecaoSem],
 ];
@@ -809,13 +983,13 @@ function campanha(result) {
     ["Venda", "Pares da oferta encontrados, ou não, nos quatro arquivos diários.", [
       ["com-venda", "Pares com venda", contagem((row) => row.vendeu), pares, `Par loja e produto que aparece em um dos quatro arquivos diários. ${sobrePares}`],
       ["sem-venda-total", "Pares sem venda", contagem((row) => !row.vendeu), pares, `Par da oferta que não aparece nos arquivos diários. ${sobrePares}`],
-      ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo"), pares, `Par sem venda e com ESTOQUE_DTBASE de domingo maior que zero. Já entra em pares sem venda. ${sobrePares}`],
+      ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo"), pares, `Par sem venda e com saldo do estoque fim maior que zero. Já entra em pares sem venda. ${sobrePares}`],
     ]],
-    ["Estoque", "Posição de domingo e a comparação com o saldo de quinta.", [
-      ["excesso", "Excesso de estoque", contagem((row) => row.irregular), pares, `Saldo de domingo maior que o saldo de quinta, os dois em ESTOQUE_DTBASE, com ou sem venda. ${sobrePares}`],
-      ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero"), pares, `Saldo de domingo igual a zero, quando existe linha de estoque nesse dia. Par sem linha não entra. ${sobrePares}`],
+    ["Estoque", "A variação é o estoque final menos o inicial, dividido pelo inicial. Positivo: o saldo terminou maior. Negativo: o saldo terminou menor.", [
+      ["excesso", "Conta aberta", contagem((row) => row.irregular), pares, result.quality.movimento ? `Partida + entrada − saída comparada ao ESTOQUE da própria linha, no arquivo inicial e no arquivo fim. Este número é o par em que a conta não fecha. ${sobrePares}` : `Estoque do primeiro dia + entrada dos dias seguintes − saída desses dias − venda desses dias, comparado ao estoque do último dia. Este número é o par em que a conta não fecha. ${sobrePares}`],
+      ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero"), pares, `Saldo do estoque fim igual a zero, quando existe linha nesse arquivo. Par sem linha não entra. ${sobrePares}`],
       ["provavel", "Ruptura provável", contagem((row) => row.provavel), pares, `Houve venda e o saldo de domingo cobre menos de um dia do ritmo desta semana. ${sobrePares}`],
-      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada"), pares, `O saldo de domingo ficou maior que o de quinta e Entradas.txt não tem QTDITEM nesse par. ${sobrePares}`],
+      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada"), pares, result.quality.movimento ? `O estoque fim ficou maior que o inicial e a QTDENTRADA do estoque fim, em dia da semana e posterior ao inicial, está zerada. Pedido não entra nessa conta. ${sobrePares}` : `O estoque do último dia ficou maior que o do primeiro e a entrada desses dias está zerada. Pedido não entra nessa conta. ${sobrePares}`],
     ]],
     ["Abastecimento", "Modalidade pela quantidade recebida em Automatico.txt.", [
       ["ambos", "Duas modalidades", duas, receberam, `O par tem QTDRECEBIDA no automático e no manual. ${sobreRecebidos}`],
@@ -855,7 +1029,7 @@ function renderCapa(result) {
     ambos: ["Dois<br>abas.", "Dois abastecimentos"],
     provavel: ["Ruptura<br>provável", "Ruptura provável"],
     ruptura: ["Ruptura", "Ruptura"],
-    excesso: ["Excesso<br>de estoque", "Excesso de estoque"],
+    excesso: ["Conta<br>aberta", "Conta aberta"],
     "sem-venda": ["Sem venda<br>com saldo", "Sem venda com saldo"],
     "sem-entrada": ["Sem<br>entrada", "Sem entrada"],
   };
@@ -885,7 +1059,7 @@ function renderCapa(result) {
   const search = state.foco === "produto"
     ? `<div class="filters"><input id="f-busca" placeholder="Produto ou comprador" value="${esc(state.busca)}"></div>`
     : "";
-  view.innerHTML = `
+  place(`
     <div class="cards">
       <article class="card">${dica("Soma de VLRTOTALVDA em Ofertas do período, nas 13 lojas.", esc, true)}<span>Venda da oferta</span><strong>${money(rede.venda)}</strong></article>
       <article class="card">${dica("Soma de VLRVENDA dos quatro arquivos diários, nas 13 lojas. Inclui o que não estava em oferta.", esc, true)}<span>Venda total do período</span><strong>${money(rede.total)}</strong></article>
@@ -906,11 +1080,11 @@ function renderCapa(result) {
     </div>
     ${search}
     <div class="panel" id="panel">
-      <div class="panel-bar"><button type="button" id="fullscreen">${document.fullscreenElement ? "Sair da tela cheia" : "Tela cheia"}</button></div>
+      <div class="panel-bar"><button type="button" id="fullscreen">${document.fullscreenElement || state.keepFull ? "Sair da tela cheia" : "Tela cheia"}</button></div>
       <div class="table-wrap"><table class="capa-table"><thead><tr><th><button type="button" class="sort" data-sort="nome">${label}${sortMark("nome")}</button></th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${CAPA_METRICS.length + 1 + (mostraVezes ? 1 : 0)}">Nenhum item neste filtro.</td></tr>`}</tbody></table></div>
       <div class="pager"><span>${people.length.toLocaleString("pt-BR")} linhas · página ${state.page + 1} de ${pages}</span><span><button type="button" id="prev">Anterior</button> <button type="button" id="next">Próxima</button></span></div>
     </div>
-    <p class="note">O número em vermelho é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos. O ponto de interrogação explica o critério da linha.</p>`;
+    <p class="note">O número em verde é a quantidade de itens do percentual. Automático e manual dividem as linhas de revenda; na visão por produto, dividem as lojas que receberam o item. Dois abastecimentos é a parcela dos produtos recebidos que chegaram no automático e no manual. O clique abre esses produtos. O ponto de interrogação explica o critério da linha.</p>`);
   view.querySelectorAll(".hint").forEach((el) => {
     el.addEventListener("click", (event) => event.stopPropagation());
     el.addEventListener("mousedown", (event) => event.stopPropagation());
@@ -1131,11 +1305,11 @@ function renderLancamento() {
     rows = rows.filter((row) => `${row.nome} ${row.lista}`.toLocaleLowerCase("pt-BR").includes(query));
   }
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Nome ou código" value="${esc(state.texto)}"></div>${table([
+  place(`<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Nome ou código" value="${esc(state.texto)}"></div>${table([
     { key: "nome", label: "Nome da oferta", value: (row) => row.nome, cell: (row) => row.nome },
     { key: "codigos", label: "Cadastradas nesse nome", num: true, value: (row) => row.codigos, cell: (row) => itens(row.codigos) },
     { key: "lista", label: "Códigos", value: (row) => row.lista, cell: (row) => row.lista },
-  ], rows)}<p class="note">Cada linha é um nome digitado em PROMOCAO. Cadastradas nesse nome é a quantidade de códigos (SEQPROMOCAO) com esse texto. São ${itens(item.nomes)} nomes e ${itens(item.codigos)} códigos.</p>`;
+  ], rows)}<p class="note">Cada linha é um nome digitado em PROMOCAO. Cadastradas nesse nome é a quantidade de códigos (SEQPROMOCAO) com esse texto. São ${itens(item.nomes)} nomes e ${itens(item.codigos)} códigos.</p>`);
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
@@ -1154,7 +1328,7 @@ function renderDetalhe() {
     return;
   }
   const rows = currentRows();
-  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button></div>${filters()}${table(detailColumns(), rows)}`;
+  place(`<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button></div>${filters()}${table(detailColumns(), rows)}`);
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
@@ -1190,13 +1364,13 @@ function renderRepeticao() {
     rows = rows.filter((row) => `${row.produto} ${row.descricao} ${row.comprador}`.toLocaleLowerCase("pt-BR").includes(query));
   }
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
+  place(`<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
     { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
     { key: "vezes", label: "Semanas anteriores", num: true, value: (row) => row.vezes, cell: (row) => itens(row.vezes) },
     { key: "anterior", label: "Semana anterior", value: (row) => row.na ? "Sim" : "Não", cell: (row) => row.na ? "Sim" : "Não" },
-  ], rows)}`;
+  ], rows)}`);
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
@@ -1222,7 +1396,7 @@ function renderVendaSemana() {
   }
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const estreante = state.repeticao === "estreia-zero";
-  view.innerHTML = `<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
+  place(`<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à capa</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table([
     { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
@@ -1230,13 +1404,13 @@ function renderVendaSemana() {
     { key: "valor", label: "Esta semana", num: true, value: (row) => row.valor, cell: (row) => money(row.valor) },
     { key: "delta", label: "Diferença", num: true, value: (row) => row.delta, cell: (row) => estreante ? "—" : money(row.delta) },
     { key: "percentual", label: "Variação", num: true, value: (row) => row.percentual ?? -999, cell: (row) => row.percentual == null || estreante ? "—" : pct(row.percentual) },
-  ], rows)}<p class="note">${estreante ? "Estreante começa nesta oferta. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. Sem venda é a desta semana." : "Variação em branco é semana anterior sem venda. A lista sem venda nas duas semanas não separa ruptura."}</p>`;
+  ], rows)}<p class="note">${estreante ? "Estreante começa nesta oferta. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. Sem venda é a desta semana." : "Variação em branco é semana anterior sem venda. A lista sem venda nas duas semanas não separa ruptura."}</p>`);
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
 
 function renderLojas(result) {
-  view.innerHTML = table([
+  place(table([
     { key: "loja", label: "Loja", value: (row) => row.nome, cell: (row) => row.nome },
     { key: "oferta", label: "Oferta", num: true, value: (row) => row.venda, cell: (row) => money(row.venda) },
     { key: "total", label: "Total da loja", num: true, value: (row) => row.totalLoja, cell: (row) => money(row.totalLoja) },
@@ -1244,14 +1418,14 @@ function renderLojas(result) {
     { key: "lucro", label: "Lucro bruto", num: true, value: (row) => row.lucro, cell: (row) => money(row.lucro) },
     { key: "margem", label: "Margem custo bruto", num: true, value: (row) => row.margem, cell: (row) => money(row.margem) },
     { key: "ruptura", label: "Ruptura", num: true, value: (row) => row.ruptura, cell: (row) => qty(row.ruptura) },
-    { key: "irregular", label: "Irregular", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
+    { key: "irregular", label: "Conta aberta", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
     { key: "sem-venda", label: "Sem venda com saldo", num: true, value: (row) => row.semVendaSaldo, cell: (row) => qty(row.semVendaSaldo) },
-  ], result.lojas);
+  ], result.lojas));
   bindFilters(result.lojas);
 }
 
 function renderBuyers(result) {
-  view.innerHTML = table([
+  place(table([
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
     { key: "venda", label: "Venda", num: true, value: (row) => row.venda, cell: (row) => money(row.venda) },
     { key: "lucro", label: "Lucro bruto", num: true, value: (row) => row.lucro, cell: (row) => money(row.lucro) },
@@ -1259,7 +1433,7 @@ function renderBuyers(result) {
     { key: "posicionado", label: "Posicionado na quinta", num: true, value: (row) => row.comPosicao ? row.posicionados / row.comPosicao : null, cell: (row) => row.comPosicao ? pct(row.posicionados / row.comPosicao) : "—" },
     { key: "ruptura", label: "Ruptura", num: true, value: (row) => row.ruptura, cell: (row) => qty(row.ruptura) },
     { key: "provavel", label: "Ruptura provável", num: true, value: (row) => row.provavel, cell: (row) => qty(row.provavel) },
-    { key: "irregular", label: "Irregular", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
+    { key: "irregular", label: "Conta aberta", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
     { key: "sem-entrada", label: "Sem entrada", num: true, value: (row) => row.excecaoSem, cell: (row) => qty(row.excecaoSem) },
     { key: "sem-venda", label: "Sem venda com saldo", num: true, value: (row) => row.semVendaSaldo, cell: (row) => qty(row.semVendaSaldo) },
     { key: "automatico", label: "Automático", num: true, value: (row) => row.automatico, cell: (row) => qty(row.automatico) },
@@ -1268,7 +1442,7 @@ function renderBuyers(result) {
     { key: "embalagem", label: "Embalagem", num: true, value: (row) => row.embalagem, cell: (row) => qty(row.embalagem) },
     { key: "materia", label: "Matéria-prima", num: true, value: (row) => row.materia, cell: (row) => qty(row.materia) },
     { key: "uso", label: "Uso e consumo", num: true, value: (row) => row.uso, cell: (row) => qty(row.uso) },
-  ], result.compradores);
+  ], result.compradores));
   bindFilters(result.compradores);
 }
 
@@ -1281,19 +1455,23 @@ function renderDatas(result) {
     return true;
   });
   const label = { antes: "Manual em dia anterior", depois: "Manual em dia posterior", "mesmo-dia-antes": "Mesmo dia, manual antes", "mesmo-dia-depois": "Mesmo dia, manual depois", misto: "Pedidos dos dois lados" };
-  view.innerHTML = filters() + table([
+  place(filters() + table([
     { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
     { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
     { key: "relacao", label: "Relação", value: (row) => label[row.relacao] || row.relacao, cell: (row) => label[row.relacao] || row.relacao },
     { key: "manuais", label: "Pedidos manuais", num: true, value: (row) => row.manuais, cell: (row) => qty(row.manuais) },
-  ], rows);
+  ], rows));
   bindFilters(rows);
 }
 
 function renderCentral(result) {
   const central = result.central;
+  if (!central.disponivel) {
+    view.innerHTML = `<p class="note">Os arquivos de estoque desta semana não trazem a central (empresa 70) nos dois dias. Sem o saldo inicial e o saldo final da central, esta tela não calcula transferência nem compra.</p>`;
+    return;
+  }
   view.innerHTML = `
     <div class="cards">
       <article class="card"><span>Oferta com saldo na central</span><strong>${qty(central.oferta)}</strong></article>
@@ -1302,7 +1480,7 @@ function renderCentral(result) {
       <article class="card"><span>Loja zerada e central com saldo</span><strong>${qty(central.lojaZeradaCdComSaldo)}</strong></article>
       <article class="card"><span>Loja e central zeradas</span><strong>${qty(central.ambosZerados)}</strong></article>
     </div>
-    <p class="note">Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. A saída da central para a loja não tem arquivo próprio.</p>`;
+    <p class="note">${result.quality.movimento ? "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. A saída da central escrita no arquivo é a QTDSAIDA do último movimento." : "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. Esta pasta ainda não tem a saída no arquivo de estoque."}</p>`;
 }
 
 function renderQuality(result) {
@@ -1312,13 +1490,15 @@ function renderQuality(result) {
       <article class="card"><span>Linhas de venda</span><strong>${qty(quality.salesRows)}</strong></article>
       <article class="card"><span>Pares com venda</span><strong>${qty(quality.paresComVenda)}</strong></article>
       <article class="card"><span>Conta de saldo que fecha</span><strong>${qty(quality.fecha)}</strong></article>
+      <article class="card"><span>Conta que não fecha</span><strong>${qty(quality.aberta)}</strong></article>
+      <article class="card"><span>Linhas de estoque fora da conta</span><strong>${qty(quality.naoFecha)}</strong></article>
       <article class="card"><span>Vendeu sem linha de estoque</span><strong>${qty(quality.semPosicaoVenda)}</strong></article>
       <article class="card"><span>Entradas repetidas descartadas</span><strong>${qty(quality.entradasRepetidas)}</strong></article>
       <article class="card"><span>Nome do pedido diferente do cadastro</span><strong>${qty(result.sistematica.nomesDiferentes)}</strong></article>
       <article class="card"><span>Linhas do automático</span><strong>${qty(result.sistematica.linhas)}</strong></article>
       <article class="card"><span>Pares na mesma loja com as duas sistemáticas</span><strong>${qty(result.datas.length)}</strong></article>
     </div>
-    <p class="note">Empresas 2, 3, 4, 6, 18, 50, 60 e 61 ficam de fora. O comprador vem de Dimproduto.</p>`;
+    <p class="note">${quality.movimento ? "A conta de cada linha de estoque é partida + entrada − saída. Ela usa EstoqueInicio.txt e EstoqueFim.txt. Empresas 2, 3, 4, 6, 18, 50, 60 e 61 ficam de fora. O comprador vem de Dimproduto." : "A posição vem do arquivo do primeiro dia e do arquivo do último dia. A conta da semana soma entrada, saída e venda só dos dias posteriores ao primeiro. Empresas 2, 3, 4, 6, 18, 50, 60 e 61 ficam de fora. O comprador vem de Dimproduto."}</p>`;
 }
 
 function renderDetail() {
@@ -1329,7 +1509,7 @@ function renderDetail() {
     excecao: [["sem-entrada", "Sem entrada"], ["insuficiente", "Entrada insuficiente"]],
   };
   const buttons = (groups[state.view] || []).map(([id, label]) => `<button type="button" class="${state.grupo === id ? "" : "secondary"}" data-grupo="${id}">${label}</button>`).join("");
-  view.innerHTML = `<div class="filters">${buttons}</div>${filters()}${table(detailColumns(), rows)}`;
+  place(`<div class="filters">${buttons}</div>${filters()}${table(detailColumns(), rows)}`);
   bindFilters(rows);
 }
 
@@ -1373,7 +1553,9 @@ nav.onclick = (event) => {
   render();
 };
 
-document.querySelector("#reload").onclick = () => run(loadServerFiles);
+document.querySelector("#reload").onclick = () => run(() => loadServerFiles(state.qual));
+document.querySelector("#semana-periodo").onclick = () => run(() => loadServerFiles("periodo"));
+document.querySelector("#semana-raiz").onclick = () => run(() => loadServerFiles("raiz"));
 document.querySelector("#pick").onclick = async () => {
   if (!window.showDirectoryPicker) {
     setProgress(0, "Este navegador não guarda a pasta. Use Chrome ou Edge.");

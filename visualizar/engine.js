@@ -33,6 +33,20 @@ function linesOf(text) {
   return text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.length > 0);
 }
 
+function isoFromBr(text) {
+  const [dia, mes, ano] = String(text || "").split(/[/-]/);
+  if (!ano || !mes || !dia) return "";
+  return `${ano}-${mes.padStart(2, "0")}-${dia.padStart(2, "0")}`;
+}
+
+const SAIDA_OPERACAO = new Set(["802", "902", "903"]);
+
+function somarDia(map, key, dias) {
+  let total = 0;
+  for (const dia of dias) total += map.get(`${dia}|${key}`) || 0;
+  return total;
+}
+
 function stamp(value) {
   const text = (value || "").trim();
   if (!text) return "";
@@ -59,22 +73,55 @@ function classeLinha(value) {
 function readStock(text, label) {
   const rows = linesOf(text);
   const header = rows[0] || "";
-  if (!header.startsWith("EMPRESA;NOME_EMPRESA;SEQPRODUTO;DESCCOMPLETA;ESTOQUE_DTBASE;DT_BASE")) {
+  const movimento = header.startsWith("NROEMPRESA;SEQPRODUTO;ULTDTAMOVIMENTO;QTDINICIAL;QTDENTRADA;QTDSAIDA;ESTOQUE");
+  const posicaoSeis = header.startsWith("EMPRESA;NOME_EMPRESA;SEQPRODUTO;DESCCOMPLETA;ESTOQUE_DTBASE;DT_BASE");
+  // Layout de 15/10: EMPRESA;SEQPRODUTO;DESCRICAO;CUSTO_UN_BRUTO;EST_TOT;CUSTO_TOT_BRUTO;DATA_BASE.
+  // Decimal com ponto, milhar com vírgula (1,368.00) e data em ISO (2026-10-15-00.00.00).
+  const posicaoSete = header.startsWith("EMPRESA;SEQPRODUTO;DESCRICAO;CUSTO_UN_BRUTO;EST_TOT;CUSTO_TOT_BRUTO;DATA_BASE");
+  const posicao = posicaoSeis || posicaoSete;
+  if (!movimento && !posicao) {
     return { ok: false, message: `Cabeçalho inesperado em ${label}.` };
   }
   const map = new Map();
+  const quando = new Map();
+  const partida = new Map();
+  const entrada = new Map();
+  const saida = new Map();
   let fora = 0;
+  let naoFecha = 0;
   for (let index = 1; index < rows.length; index += 1) {
     const parts = rows[index].split(";");
-    if (parts.length < 6) continue;
-    if (DROP.has(parts[0])) {
+    const empresa = parts[0];
+    const produto = movimento || posicaoSete ? parts[1] : parts[2];
+    if (((movimento || posicaoSete) && parts.length < 7) || (posicaoSeis && parts.length < 6)) continue;
+    if (DROP.has(empresa)) {
       fora += 1;
       continue;
     }
-    if (!KEEP.has(parts[0])) continue;
-    map.set(`${parts[0]}|${parts[2]}`, num(parts[4]));
+    if (!KEEP.has(empresa)) continue;
+    const chave = `${empresa}|${produto}`;
+    if (movimento) {
+      const saldoPartida = num(parts[3]);
+      const saldoEntrada = num(parts[4]);
+      const saldoSaida = num(parts[5]);
+      const saldo = num(parts[6]);
+      if (Math.abs(saldoPartida + saldoEntrada - saldoSaida - saldo) > EPS) naoFecha += 1;
+      map.set(chave, saldo);
+      quando.set(chave, isoFromBr(parts[2]));
+      partida.set(chave, saldoPartida);
+      entrada.set(chave, saldoEntrada);
+      saida.set(chave, saldoSaida);
+    } else if (posicaoSete) {
+      const saldo = Number(String(parts[4] || "").trim().replace(/,/g, ""));
+      if (!Number.isFinite(saldo)) continue;
+      map.set(chave, saldo);
+      quando.set(chave, String(parts[6] || "").slice(0, 10));
+    } else {
+      map.set(chave, num(parts[4]));
+      quando.set(chave, String(parts[5] || "").slice(0, 10));
+    }
   }
-  return { ok: true, map, fora };
+  return { ok: true, map, quando, partida, entrada, saida, fora, movimento, naoFecha };
 }
 
 function parseLojas(rows) {
@@ -122,6 +169,7 @@ function analyze(input) {
   }
 
   const salesQty = new Map();
+  const salesDay = new Map();
   const salesValue = new Map();
   const salesProfit = new Map();
   const salesCost = new Map();
@@ -149,7 +197,10 @@ function analyze(input) {
       sold.add(key);
       periodByStore[store] = (periodByStore[store] || 0) + value;
       periodTotal += value;
-      salesQty.set(key, (salesQty.get(key) || 0) + num(parts[3]));
+      const quantidadeDia = num(parts[3]);
+      salesQty.set(key, (salesQty.get(key) || 0) + quantidadeDia);
+      const chaveDia = `${isoFromBr(file.date)}|${key}`;
+      salesDay.set(chaveDia, (salesDay.get(chaveDia) || 0) + quantidadeDia);
       salesValue.set(key, (salesValue.get(key) || 0) + value);
       salesProfit.set(key, (salesProfit.get(key) || 0) + num(parts[5]));
       salesCost.set(key, (salesCost.get(key) || 0) + num(parts[6]));
@@ -247,15 +298,26 @@ function analyze(input) {
   if (!estoqueInicial.ok) return estoqueInicial;
   const estoqueFinal = readStock(input.fim, "estoque de domingo");
   if (!estoqueFinal.ok) return estoqueFinal;
+  if (estoqueInicial.movimento !== estoqueFinal.movimento) {
+    return { ok: false, message: "O estoque inicial e o estoque fim precisam ser os dois arquivos de movimento, ou os dois de posição." };
+  }
+  const movimento = Boolean(estoqueInicial.movimento);
   const inicial = estoqueInicial.map;
   const final = estoqueFinal.map;
+  const inicioQuando = estoqueInicial.quando;
+  const fimQuando = estoqueFinal.quando;
   const inicioFora = estoqueInicial.fora;
   const fimFora = estoqueFinal.fora;
+  const diasPeriodo = period.dates.map(isoFromBr);
+  const primeiraData = diasPeriodo[0];
+  const ultimaData = diasPeriodo[diasPeriodo.length - 1];
 
-  const entradas = new Map();
+  const movEntrada = new Map();
+  const movSaida = new Map();
+  const movLinhas = new Map();
   const seenEntry = new Set();
   let entradasRepetidas = 0;
-  const entradaRows = linesOf(input.entradas);
+  const entradaRows = linesOf(input.entradas || "");
   for (let index = 1; index < entradaRows.length; index += 1) {
     const line = entradaRows[index];
     if (seenEntry.has(line)) {
@@ -264,10 +326,17 @@ function analyze(input) {
     }
     seenEntry.add(line);
     const parts = line.split(";");
-    if (parts.length < 8) continue;
-    if (!KEEP.has(parts[4])) continue;
+    if (parts.length < 8 || !KEEP.has(parts[4])) continue;
     const key = `${parts[4]}|${parts[5]}`;
-    entradas.set(key, (entradas.get(key) || 0) + num(parts[7]));
+    const quantidade = num(parts[7]);
+    const saida = SAIDA_OPERACAO.has(parts[2]);
+    const dia = isoFromBr(parts[0]);
+    const destino = saida ? movSaida : movEntrada;
+    const chaveDia = `${dia}|${key}`;
+    destino.set(chaveDia, (destino.get(chaveDia) || 0) + quantidade);
+    const linhas = movLinhas.get(key) || [];
+    linhas.push({ dia, saida, texto: parts[3] || "", qtd: quantidade });
+    movLinhas.set(key, linhas);
   }
 
   const lojasTotal = parseLojas(input.lojas || []);
@@ -338,6 +407,9 @@ function analyze(input) {
     produtosOferta: offer.size,
     paresComVenda: sold.size,
     fecha: 0,
+    aberta: 0,
+    movimento,
+    naoFecha: estoqueInicial.naoFecha + estoqueFinal.naoFecha,
     semPosicaoVenda: 0,
     inicioFora,
     fimFora,
@@ -364,8 +436,32 @@ function analyze(input) {
       const ef = final.has(key) ? final.get(key) : null;
       const hasBoth = qi != null && ef != null;
       const hasFinal = ef != null;
-      const en = entradas.get(key) || 0;
       const qv = salesQty.get(key) || 0;
+      const coluna = (mapa) => (movimento && mapa.has(key) ? mapa.get(key) : null);
+      const partidaInicial = coluna(estoqueInicial.partida);
+      const entradaInicial = coluna(estoqueInicial.entrada);
+      const saidaInicial = coluna(estoqueInicial.saida);
+      const partidaFinal = coluna(estoqueFinal.partida);
+      const entradaFinal = coluna(estoqueFinal.entrada);
+      const saidaFinal = coluna(estoqueFinal.saida);
+      const dataInicial = inicioQuando.get(key) || "";
+      const dataFinal = fimQuando.get(key) || "";
+      const fechaInicial = partidaInicial != null && qi != null && Math.abs(partidaInicial + entradaInicial - saidaInicial - qi) <= EPS;
+      const fechaFinal = partidaFinal != null && ef != null && Math.abs(partidaFinal + entradaFinal - saidaFinal - ef) <= EPS;
+      const dentroDaSemana = Boolean(dataFinal) && dataFinal >= primeiraData && dataFinal <= ultimaData;
+      const entradaDepois = partidaFinal != null && dataFinal > dataInicial && dentroDaSemana ? entradaFinal : 0;
+      const intervalo = movimento && hasBoth && partidaFinal != null ? partidaFinal - qi : null;
+      const diasConta = diasPeriodo.filter((dia) => dataInicial && dataFinal && dataInicial < dia && dia <= dataFinal);
+      const entradaMov = somarDia(movEntrada, key, diasConta);
+      const saidaMov = somarDia(movSaida, key, diasConta);
+      const vendaMov = somarDia(salesDay, key, diasConta);
+      const conta = hasBoth && dataInicial && dataFinal && dataInicial <= dataFinal ? qi + entradaMov - saidaMov - vendaMov : null;
+      const fechaConta = conta != null && Math.abs(conta - ef) <= EPS;
+      const linhasMov = movLinhas.get(key) || [];
+      const textoMov = (querSaida) => linhasMov
+        .filter((item) => item.saida === querSaida && diasConta.includes(item.dia) && Math.abs(item.qtd) > EPS)
+        .map((item) => `${item.dia.split("-").reverse().join("/")} ${item.texto} ${item.qtd}`)
+        .join(" | ");
       const vv = salesValue.get(key) || 0;
       const lucro = salesProfit.get(key) || 0;
       const margem = vv - (salesCost.get(key) || 0);
@@ -429,19 +525,36 @@ function analyze(input) {
       if (hasBoth) {
         if (qi > EPS) buyer.posicionados += 1;
         const grew = ef > qi + EPS;
-        irregular = grew;
-        if (grew && en <= EPS) excecao = "sem-entrada";
-        else if (grew && en > EPS && qv > en + EPS) excecao = "entrada-insuficiente";
+        const encadeado = intervalo != null && Math.abs(intervalo) <= EPS;
+        irregular = movimento && partidaInicial != null && partidaFinal != null && (!fechaInicial || !fechaFinal);
+        if (movimento && grew && entradaDepois <= EPS) excecao = "sem-entrada";
+        else if (movimento && grew && encadeado && entradaDepois > EPS && entradaDepois + EPS < ef - qi) excecao = "entrada-insuficiente";
         if (irregular) {
           buyer.irregular += 1;
           storeRow.irregular += 1;
+          quality.aberta += 1;
         }
         if (excecao === "sem-entrada") {
           buyer.excecaoSem += 1;
           storeRow.excecaoSem += 1;
         }
         if (excecao === "entrada-insuficiente") buyer.excecaoInsuf += 1;
-        if (hasSale && Math.abs(ef - (qi + en - qv)) <= EPS) quality.fecha += 1;
+        if (movimento && fechaInicial && fechaFinal) quality.fecha += 1;
+      }
+
+      if (!movimento && hasBoth && conta != null) {
+        if (fechaConta) quality.fecha += 1;
+        else {
+          irregular = true;
+          quality.aberta += 1;
+          buyer.irregular += 1;
+          storeRow.irregular += 1;
+        }
+        if (ef > qi + EPS && entradaMov <= EPS) {
+          excecao = "sem-entrada";
+          buyer.excecaoSem += 1;
+          storeRow.excecaoSem += 1;
+        }
       }
 
       if (!hasSale && !hasFinal) situacao = "sem-linha";
@@ -459,7 +572,23 @@ function analyze(input) {
         margem,
         quantidade: qv,
         inicial: qi,
-        entradas: en,
+        partidaInicial,
+        entradaInicial,
+        saidaInicial,
+        dataInicial,
+        partidaFinal,
+        entradaFinal,
+        saidaFinal,
+        dataFinal,
+        intervalo,
+        entradaDepois,
+        entradaMov,
+        saidaMov,
+        vendaMov,
+        conta,
+        fechaConta,
+        entradaTexto: textoMov(false),
+        saidaTexto: textoMov(true),
         final: ef,
         vendeu: hasSale,
         situacao,
@@ -467,12 +596,12 @@ function analyze(input) {
         excecao,
         provavel,
         cobertura,
-        sellThrough: qi != null && qi + en > EPS ? qv / (qi + en) : null,
+        sellThrough: qi != null && qi + entradaDepois > EPS ? qv / (qi + entradaDepois) : null,
       });
     }
   }
 
-  const central = { oferta: 0, cresceu: 0, caiu: 0, estavel: 0, lojaZeradaCdComSaldo: 0, ambosZerados: 0 };
+  const central = { disponivel: false, oferta: 0, cresceu: 0, caiu: 0, estavel: 0, lojaZeradaCdComSaldo: 0, ambosZerados: 0 };
   const cdFinal = new Map();
   const cdInicial = new Map();
   for (const [key, value] of final) {
@@ -481,6 +610,7 @@ function analyze(input) {
   for (const [key, value] of inicial) {
     if (key.startsWith("70|")) cdInicial.set(key.slice(3), value);
   }
+  central.disponivel = cdFinal.size > 0 && cdInicial.size > 0;
   for (const product of offer) {
     if (!cdFinal.has(product) || !cdInicial.has(product)) continue;
     central.oferta += 1;
