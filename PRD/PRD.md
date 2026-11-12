@@ -284,29 +284,34 @@ O saldo pendente é o da data de extração do arquivo, não o do domingo. O par
 
 ### 5.13 Abastecimento e sobra por comprador
 
-Leitura simples para a diretoria: um card por comprador (aba "Sobra por comprador" e seção do resumo executivo), com a conta da esquerda para a direita.
+Leitura simples para a diretoria: um card por comprador (aba "Sobra por comprador" e seção do resumo executivo).
 
-`estoque inicial + entrada no estoque = disponível`, `− vendeu ± ajuste → sobrou`, `% sobra = sobrou ÷ disponível`.
+Cada card traz três números: **Entrada**, **Vendeu** e **Estoque final**, e o percentual de sobra: `% sobra = estoque final ÷ (estoque inicial + entrada)`. O estoque inicial não ocupa coluna; aparece na dica do percentual (passar o mouse).
 
-- **Entrada no estoque** é a do `Entradas.txt` nos dias da conta da janela (a mesma da seção 5.3). A quantidade recebida do pedido (automático e manual, seção 5.9) aparece ao lado e fica fora da base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo.
-- **Sobrou** é o estoque final real do último dia. Saldo negativo conta como zero.
-- **Ajuste** = sobrou − (disponível − vendeu). Negativo: saiu mais do que a venda explica (quebra, transferência, consumo). Positivo: entrou mais do que o arquivo de entradas registra. Faz o card fechar sem esconder a diferença da conta.
-- **Situação do produto** (soma das 13 lojas; cada produto cai em um grupo só). Cobertura = sobrou × 4 ÷ vendeu, em dias de venda da semana.
-  - Faltando / risco de ruptura: sem saldo, ou cobertura abaixo de 1 dia (a mesma régua da ruptura provável, seção 5.5).
-  - Com sobra: sem venda com saldo, ou cobertura de 7 dias ou mais.
-  - No padrão: entre os dois.
-  - O limite de 1 dia vem da seção 5.5. O de 7 dias é uma referência que não vem dos arquivos. Os dois podem ser alterados na tela (campos no topo da aba) e o resumo executivo usa 1 e 7.
+- **Entrada** é a do `Entradas.txt` **depois do 1º dia** (os dias da conta da janela, seção 5.3). As entradas do 1º dia já estão dentro do estoque inicial, porque o arquivo de estoque do primeiro dia fecha o dia: não somam de novo.
+- **Abastecimento da entrada: automático, manual ou sem pedido.** Cada par loja + produto liga a entrada ao pedido do arquivo `Automatico.txt`, pela modalidade da linha (`classeLinha(COMPRADOR)`: `ABAST.AUT` é automático, nome de pessoa é manual, embalagem, matéria-prima e uso e consumo ficam fora). Uma modalidade conta no par quando o recebido é maior que 0,05.
+  - Só automático: toda a entrada do par é automática. Só manual: toda manual.
+  - Os dois: a entrada se divide pela `QTDRECEBIDA` de cada modalidade.
+  - **Sem pedido**: o par não tem pedido recebido no arquivo. Aqui entram as transferências entre lojas (78% das unidades que entram nas lojas são operação 50, a maior parte vinda do CD) e os pedidos com recebimento previsto fora dos quatro dias.
+  - Automático + manual + sem pedido = entrada, em cada produto, comprador e na rede. A etapa 11 da validação confere.
+  - Na lista de produtos, a coluna Entrada leva uma etiqueta (Automático, Manual, Sem pedido, ou Misto, com as quantidades na dica). A tabela de comparação traz as três quantidades.
+- **"Entrada" e "pedido recebido" não são iguais.** O `QTDRECEBIDA` só traz pedidos com recebimento previsto nos quatro dias, não traz transferências entre lojas nem as entradas do 1º dia, e pode ter chegado depois do domingo. Exemplo, produto 934 (molho de tomate) do comprador Armando: inicial 22.729 (com 7.923 de entradas do 1º dia), entrou depois 5.328 (transferências nas lojas 5, 7, 11 e 14, sem pedido) e pedido manual recebido 3.600 (lojas 12 e 17, com recebimento previsto para o 1º dia). Na tela, essas 5.328 aparecem como "Sem pedido".
+- **Estoque final** é o saldo do último dia. Saldo negativo conta como zero. O estoque final não é igual a disponível − vendeu: a diferença (ajuste) é saída que nenhum arquivo traz (quebra, transferência, consumo) ou entrada não registrada. O ajuste continua no cálculo e na nota da tela, mas não ocupa coluna.
+- **Situação do produto, loja a loja.** Cada produto cai em um só grupo. Cobertura = estoque final × 4 ÷ vendeu, em dias de venda da semana.
+  - **Faltando / risco de ruptura**: pelo menos uma das lojas com o par sem saldo (estoque final zero ou negativo), ou com cobertura abaixo de 1 dia (a mesma régua da ruptura provável, seção 5.5).
+  - **Com sobra**: nenhuma loja em risco e, na soma das lojas, sem venda ou cobertura de 7 dias ou mais.
+  - **No padrão**: nenhuma loja em risco e cobertura total entre 1 e 7 dias.
+  - O risco olha cada loja, não a soma: um produto com 2 de 13 lojas zeradas está em Faltando mesmo que o total dê cobertura alta. Isso resolve a incoerência antiga, em que o card dizia "sem risco" e a lista mostrava produto com loja zerada. A lista mostra "N de M lojas sem estoque ou em risco" em cada produto de Faltando.
+  - O limite de 1 dia vem da seção 5.5. O de 7 dias é uma referência que não vem dos arquivos. Os dois podem ser alterados na tela e o resumo executivo usa 1 e 7.
   - O card mostra quantos produtos há em cada grupo e o percentual, e os três botões escolhem qual lista abrir.
-  - A situação olha o produto na soma das lojas. A coluna "Lojas zeradas" mostra em quantas lojas o saldo ficou zero, pois um produto "no padrão" na soma pode estar zerado em algumas lojas.
-- **Comparação entre compradores**: tabela no topo da aba, com produtos por grupo, barra de distribuição, % sobra, estoque inicial, entrou, vendeu, sobrou e pares de loja zerados. Os cabeçalhos ordenam. Tabela e cada card têm "Tela cheia".
-- Colunas da lista de produtos: estoque inicial, entrou, pedido automático / manual, vendeu, sobrou, % sobra, cobertura e lojas zeradas.
-- **A loja 70 (central, CD) fica fora da sobra por comprador.** O foco é saber o que foi abastecido em excesso nas lojas, e o saldo do CD alteraria a análise. Só as 13 lojas de varejo (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) entram: estoque inicial, entrada, venda, sobra, grupos e pares. A central aparece apenas na seção 5.6 (falha de transferência ou de compra). Verificado em 12/11/2026: a lista de pares da análise tem só as 13 lojas (30.901 = 2.377 produtos × 13), e a etapa 11 da validação falha se a 70 aparecer.
+- **Comparação entre compradores**: tabela no topo da aba, com produtos por grupo, barra de distribuição, % sobra, entrada (total, automática, manual e sem pedido), vendeu e estoque final. Os cabeçalhos ordenam. Tabela e cada card têm "Tela cheia".
+- Colunas da lista de produtos: produto, **entrada** (com a etiqueta de abastecimento), **vendeu** e **estoque final**.
+- **A loja 70 (central, CD) fica fora da sobra por comprador.** O foco é saber o que foi abastecido em excesso nas lojas, e o saldo do CD alteraria a análise. Só as 13 lojas de varejo (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) entram. A central aparece apenas na seção 5.6. A etapa 11 falha se a 70 aparecer (30.901 pares = 2.377 produtos × 13).
 - Contam só os pares loja + produto com as duas linhas de estoque. Os demais ficam fora e o número aparece no texto.
-- O percentual compara compradores. A soma de unidades mistura produtos diferentes, por isso cada card traz a lista dos produtos com mais sobra (ordem da sobra em unidades, 30 na tela, 10 no resumo), somados nas 13 lojas. A exportação em CSV traz todos.
-- Os compradores ficam em ordem do % sobra. Não há corte para "sobra demais".
-- Não há sobra em reais: o custo só existe onde houve venda.
-- Função: `sobraPorComprador()` em `visualizar/engine.js`. Validação: etapa 11 de `testes/validar_etapas.mjs`, que recalcula inicial, entrada, venda e sobra de cada comprador direto dos arquivos crus.
-- Semana 29/10 a 01/11: sobra de 79,25% na rede (disponível 2.491.793, sobrou 1.974.738, ajuste +125.798) em 21.906 pares. A semana de 22 a 25/10 deu 76,32%.
+- O percentual compara compradores. A soma de unidades mistura produtos diferentes. A exportação em CSV traz todos os produtos (entrada total, automática, manual, sem pedido, vendeu, estoque final, % sobra, situação e lojas em risco).
+- Os compradores ficam em ordem do % sobra. Não há corte para "sobra demais". Não há sobra em reais.
+- Função: `sobraPorComprador()` em `visualizar/engine.js`. Validação: etapa 11 de `testes/validar_etapas.mjs`, que recalcula direto dos arquivos crus: lojas, pares, inicial, entrada, venda e estoque final por comprador; entrada automática, manual e sem pedido; situação de cada produto loja a loja; contagem por grupo; varredura de consistência (nenhum produto com loja zerada ou em risco fora de Faltando; pares em risco = ruptura + saldo negativo + ruptura provável da capa); e o fechamento da lista com o card.
+- Semana 29/10 a 01/11: sobra de 79,25% na rede (disponível 2.491.793, estoque final 1.974.738) em 21.906 pares. Dos 1.922 produtos, 665 ficam em Faltando por ter pelo menos uma loja sem estoque ou em risco (1.787 pares). A semana de 22 a 25/10 deu 76,32%.
 
 ## 6. O que a tela mostra
 

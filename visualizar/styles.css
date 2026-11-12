@@ -257,4 +257,12 @@ button.card:hover { border-color: var(--navy); }
 .sobra-card.expandido .table-wrap, .sobra-comp.expandido .table-wrap { max-height: none; }
 .sobra-card.expandido .sobra-prod td, .sobra-comp.expandido td { padding: 9px 10px; }
 .sobra-card.expandido .sobra-prod td.prod { width: 40%; }
-@media (max-width: 700px) { .sobra-grade { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .sobra-grade { grid-template-columns: 1fr; } }.sobra-prod td.prod small.alerta { display: block; color: var(--vermelho); font-size: 11px; font-weight: 600; margin-left: 0; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: #eef3ee; color: var(--navy); }
+.tag-entAuto { background: #dff3e0; color: #0a6a10; }
+.tag-entManual { background: #e6ecf7; color: #1f3a8a; }
+.tag-entSemPedido { background: #eee; color: #555; }
+.tag-misto { background: #fdf0d2; color: #7a5200; }
+
+.sobra-prod td.entrada .tag { margin-left: 6px; }
+.sobra-conta { display: flex; gap: 28px; flex-wrap: wrap; }

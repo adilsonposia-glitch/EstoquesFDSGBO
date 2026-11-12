@@ -1,4 +1,4 @@
-import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=44";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=46";
 
 // Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
 const buscar = (url) => fetch(url, { cache: "no-store" });
@@ -1613,16 +1613,16 @@ function renderBuyers(result) {
 
 const sobraCfg = { risco: 1, dias: 7, ordem: "pct", sentido: "desc" };
 const GRUPOS_SOBRA = [
-  { id: "sobra", nome: "Com sobra", dica: "Sem venda com saldo, ou saldo que cobre os dias de venda do limite de sobra ou mais." },
-  { id: "padrao", nome: "No padrão", dica: "Saldo entre o limite de risco e o limite de sobra." },
-  { id: "risco", nome: "Faltando / risco de ruptura", dica: "Sem saldo, ou saldo que cobre menos dias de venda que o limite de risco." },
+  { id: "sobra", nome: "Com sobra", dica: "Nenhuma loja em risco e o saldo cobre o limite de sobra em dias de venda ou mais (ou não houve venda)." },
+  { id: "padrao", nome: "No padrão", dica: "Nenhuma loja em risco e o saldo fica entre o limite de risco e o limite de sobra." },
+  { id: "risco", nome: "Faltando / risco de ruptura", dica: "Pelo menos uma loja sem saldo, ou com saldo que cobre menos dias de venda que o limite de risco." },
 ];
 
 function renderSobra(result) {
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const lista = sobraPorComprador(result.details, { risco: sobraCfg.risco, sobraDias: sobraCfg.dias });
   const soma = (campo) => lista.reduce((s, c) => s + (c[campo] || 0), 0);
-  const rede = { comprador: "Rede", inicial: soma("inicial"), entrada: soma("entrada"), venda: soma("venda"), sobra: soma("sobra"), pares: soma("pares"), zeradas: soma("zeradas"), fora: soma("foraDaBase"), nSobra: soma("nSobra"), nPadrao: soma("nPadrao"), nRisco: soma("nRisco") };
+  const rede = { comprador: "Rede", inicial: soma("inicial"), entrada: soma("entrada"), entAuto: soma("entAuto"), entManual: soma("entManual"), entSemPedido: soma("entSemPedido"), venda: soma("venda"), sobra: soma("sobra"), pares: soma("pares"), fora: soma("foraDaBase"), nSobra: soma("nSobra"), nPadrao: soma("nPadrao"), nRisco: soma("nRisco") };
   rede.disponivel = rede.inicial + rede.entrada;
   rede.pct = rede.disponivel > 0.05 ? rede.sobra / rede.disponivel : null;
   const nProd = (c) => c.nSobra + c.nPadrao + c.nRisco;
@@ -1642,11 +1642,12 @@ function renderSobra(result) {
     { k: "nRisco", t: "Faltando / risco", v: (c) => c.nRisco, c: (c) => `${itens(c.nRisco)} <small>${pc(c.nRisco, nProd(c))}</small>` },
     { k: "grafico", t: "Distribuição", v: (c) => c.nRisco / (nProd(c) || 1), c: (c) => barra(c) },
     { k: "pct", t: "% sobra", v: (c) => c.pct ?? -1, c: (c) => `<b>${c.pct == null ? "—" : pct(c.pct)}</b>` },
-    { k: "inicial", t: "Estoque inicial", v: (c) => c.inicial, c: (c) => qty(c.inicial) },
-    { k: "entrada", t: "Entrou", v: (c) => c.entrada, c: (c) => qty(c.entrada) },
+    { k: "entrada", t: "Entrada", v: (c) => c.entrada, c: (c) => qty(c.entrada) },
+    { k: "entAuto", t: "Entrada automática", v: (c) => c.entAuto, c: (c) => qty(Math.round(c.entAuto)) },
+    { k: "entManual", t: "Entrada manual", v: (c) => c.entManual, c: (c) => qty(Math.round(c.entManual)) },
+    { k: "entSemPedido", t: "Entrada sem pedido", v: (c) => c.entSemPedido, c: (c) => qty(Math.round(c.entSemPedido)) },
     { k: "venda", t: "Vendeu", v: (c) => c.venda, c: (c) => qty(c.venda) },
-    { k: "sobra", t: "Sobrou", v: (c) => c.sobra, c: (c) => qty(c.sobra) },
-    { k: "zeradas", t: "Pares de loja zerados", v: (c) => c.zeradas, c: (c) => itens(c.zeradas) },
+    { k: "sobra", t: "Estoque final", v: (c) => c.sobra, c: (c) => qty(c.sobra) },
   ];
   const ordenar = (rows) => {
     const col = COLS.find((x) => x.k === sobraCfg.ordem) || COLS[6];
@@ -1668,27 +1669,37 @@ function renderSobra(result) {
     </section>`;
 
   /* Card por comprador */
-  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}</td><td class="num">${qty(p.inicial)}</td><td class="num">${qty(p.entrada)}</td><td class="num">${qty(p.auto)} / ${qty(p.manual)}</td><td class="num">${qty(p.venda)}</td><td class="num"><b>${qty(p.sobra)}</b></td><td class="num">${p.pct == null ? "—" : pct(p.pct)}</td><td class="num">${p.cobertura == null ? (p.sobra > 0.05 ? "sem venda" : "—") : qty(Math.round(p.cobertura * 10) / 10)}</td><td class="num">${p.zeradas ? `${p.zeradas} de ${p.lojas}` : "—"}</td></tr>`;
+  const ROTULO = { entAuto: "Automático", entManual: "Manual", entSemPedido: "Sem pedido" };
+  const partesEntrada = (o) => ["entAuto", "entManual", "entSemPedido"].filter((k) => o[k] > 0.05).map((k) => ({ k, nome: ROTULO[k], v: o[k] }));
+  const abastecimento = (p) => {
+    const partes = partesEntrada(p);
+    if (!partes.length) return "—";
+    const dica = ["entAuto", "entManual", "entSemPedido"].map((k) => `${ROTULO[k]} ${qty(Math.round(p[k]))}`).join(" · ");
+    const rotulo = partes.length === 1 ? partes[0].nome : "Misto";
+    return `<span class="tag tag-${partes.length === 1 ? partes[0].k : "misto"}" title="${esc(dica)}">${rotulo}</span>`;
+  };
+  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}${p.lojasRisco ? `<small class="alerta">${p.lojasRisco} de ${p.lojas} lojas sem estoque ou em risco</small>` : ""}</td><td class="num entrada">${qty(p.entrada)} ${abastecimento(p)}</td><td class="num">${qty(p.venda)}</td><td class="num"><b>${qty(p.sobra)}</b></td></tr>`;
   const ordemGrupo = {
     sobra: (l) => l,
     padrao: (l) => l,
-    risco: (l) => [...l].sort((a, b) => (a.sobra > 0.05) - (b.sobra > 0.05) || b.venda - a.venda || (a.cobertura ?? 0) - (b.cobertura ?? 0)),
+    risco: (l) => [...l].sort((a, b) => b.lojasRisco - a.lojasRisco || b.venda - a.venda),
   };
   const tabelaGrupo = (c, g) => {
     const itensG = ordemGrupo[g.id](c.produtos.filter((p) => p.classe === g.id));
-    return `<tbody class="grupo-${g.id}">${itensG.map(linhaProd).join("") || `<tr><td colspan="9" class="txt">Nenhum produto neste grupo.</td></tr>`}</tbody>`;
+    return `<tbody class="grupo-${g.id}">${itensG.map(linhaProd).join("") || `<tr><td colspan="4" class="txt">Nenhum produto neste grupo.</td></tr>`}</tbody>`;
   };
   const card = (c) => {
     const n = nProd(c);
+    const partes = partesEntrada(c);
     return `
     <article class="card sobra-card g-sobra" data-comp="${esc(c.comprador)}">
       <header>
-        <div><h3>${esc(c.comprador)}</h3><small>${itens(n)} produtos · ${itens(c.pares)} pares de loja · ${itens(c.zeradas)} zerados</small></div>
-        <b class="sobra-pct">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b>
+        <div><h3>${esc(c.comprador)}</h3><small>${itens(n)} produtos · ${itens(c.pares)} pares de loja</small></div>
+        <b class="sobra-pct" title="Estoque final ÷ (estoque inicial + entrada). Estoque inicial ${qty(c.inicial)} + entrada ${qty(c.entrada)} = ${qty(c.disponivel)}.">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b>
         ${botao("card")}
       </header>
-      <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em>Entrou</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em>Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Sobrou</em>${qty(c.sobra)}</span></p>
-      <p class="sobra-origem">Pedido recebido: <b>${qty(c.auto)}</b> automático · <b>${qty(c.manual)}</b> manual${c.recSemEntrada ? ` · ${itens(c.recSemEntrada)} pares recebidos sem entrada no estoque` : ""}</p>
+      <p class="sobra-conta"><span><em title="Entradas do Entradas.txt depois do 1º dia. As do 1º dia já estão dentro do estoque inicial.">Entrada</em>${qty(c.entrada)}</span><span><em>Vendeu</em>${qty(c.venda)}</span><span class="destaque"><em>Estoque final</em>${qty(c.sobra)}</span></p>
+      <p class="sobra-origem" title="Cada entrada é ligada ao abastecimento do par loja + produto no arquivo de pedidos. Sem pedido: transferência entre lojas e outras entradas que o arquivo de pedidos não traz.">Entrada por abastecimento: ${partes.length ? partes.map((x) => `${x.nome.toLowerCase()} <b>${qty(Math.round(x.v))}</b>`).join(" · ") : "sem entrada"}</p>
       <div class="sobra-situacao">
         <p class="sobra-quanto">Dos <b>${itens(n)}</b> produtos:</p>
         ${barra(c)}
@@ -1699,7 +1710,7 @@ function renderSobra(result) {
       <details class="sobra-lista">
         <summary>Ver os produtos do grupo escolhido</summary>
         <div class="table-wrap"><table class="sobra-tabela sobra-prod">
-          <thead><tr><th class="txt">Produto</th><th class="num" title="Estoque do primeiro dia">Estoque inicial</th><th class="num" title="Entrada no estoque (Entradas.txt)">Entrou</th><th class="num" title="Pedido recebido: automático / manual">Pedido aut. / man.</th><th class="num">Vendeu</th><th class="num" title="Estoque final do último dia">Sobrou</th><th class="num" title="Sobrou ÷ (estoque inicial + entrou)">% sobra</th><th class="num" title="Dias de venda que o saldo cobre, no ritmo da semana">Cobertura (dias)</th><th class="num" title="Lojas com saldo zero">Lojas zeradas</th></tr></thead>
+          <thead><tr><th class="txt">Produto</th><th class="num" title="Entradas do Entradas.txt depois do 1º dia. A etiqueta diz o abastecimento: automático, manual ou sem pedido no arquivo de pedidos. Misto: mais de um; passe o mouse para ver as quantidades.">Entrada</th><th class="num">Vendeu</th><th class="num" title="Estoque do último dia">Estoque final</th></tr></thead>
           ${GRUPOS_SOBRA.map((g) => tabelaGrupo(c, g)).join("")}
         </table></div>
       </details>
@@ -1708,13 +1719,13 @@ function renderSobra(result) {
 
   view.innerHTML = `
     <div class="sobra-param">
-      <label>Faltando: saldo cobre menos de <input type="number" id="sobra-risco" min="0" step="0.5" value="${sobraCfg.risco}"> dia(s) de venda</label>
-      <label>Sobra: saldo cobre <input type="number" id="sobra-dias" min="1" step="1" value="${sobraCfg.dias}"> dias de venda ou mais</label>
+      <label>Faltando: alguma loja sem saldo ou com saldo para menos de <input type="number" id="sobra-risco" min="0" step="0.5" value="${sobraCfg.risco}"> dia(s) de venda</label>
+      <label>Sobra: saldo para <input type="number" id="sobra-dias" min="1" step="1" value="${sobraCfg.dias}"> dias de venda ou mais</label>
       <span>Os dois limites são referência e podem ser alterados. Não vêm dos arquivos.</span>
     </div>
     ${comparacao}
     <div class="sobra-grade">${lista.map(card).join("")}</div>
-    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível, só nas 13 lojas: a central (70, CD) fica de fora. Disponível = estoque inicial + entrada no estoque (Entradas.txt). Sobrou = estoque final real do último dia. % sobra = sobrou ÷ disponível. Ajuste = o que a conta não explica (sobrou − (disponível − vendeu)): negativo é saída que nenhum arquivo traz, como quebra ou transferência; positivo é entrada não registrada. Pedido recebido, automático e manual, fica ao lado e fora da base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo. Cada produto (soma das 13 lojas) cai em um grupo só, pela cobertura = sobrou × 4 ÷ vendeu: Faltando (sem saldo ou cobertura abaixo do limite de risco), Com sobra (sem venda com saldo ou cobertura no limite de sobra ou acima) e No padrão (entre os dois). Soma de unidades de produtos diferentes: compare pelo percentual e pelas contagens, e aja pela lista de produtos. Rede: ${rede.pct == null ? "—" : pct(rede.pct)} de sobra em ${itens(rede.pares)} pares; ${itens(rede.fora)} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>`;
+    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível, só nas 13 lojas: a central (70, CD) fica de fora. Disponível = estoque inicial + entrada. A entrada é a do Entradas.txt depois do 1º dia: as do 1º dia já estão dentro do estoque inicial, porque o arquivo de estoque do primeiro dia fecha o dia. Estoque final = saldo do último dia. % sobra = estoque final ÷ disponível (passe o mouse no percentual do card para ver estoque inicial + entrada). Estoque final não é igual a disponível − vendeu: o que sobra da conta é saída que nenhum arquivo traz (quebra, transferência) ou entrada não registrada. A entrada é referenciada ao abastecimento do par loja + produto no arquivo de pedidos: automático, manual ou sem pedido (transferência entre lojas e outras entradas que o arquivo de pedidos não traz). Se o par tem pedido automático e manual, a entrada se divide pela quantidade recebida de cada um. Situação do produto, olhando as lojas uma a uma: Faltando = pelo menos uma loja sem saldo ou com saldo para menos dias de venda que o limite de risco; Com sobra = nenhuma loja em risco e saldo para o limite de sobra em dias de venda ou mais (ou sem venda); No padrão = nenhuma loja em risco e saldo entre os dois. Soma de unidades de produtos diferentes: compare pelo percentual e pelas contagens, e aja pela lista de produtos. Rede: ${rede.pct == null ? "—" : pct(rede.pct)} de sobra em ${itens(rede.pares)} pares; ${itens(rede.fora)} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>`;
 
   /* interações */
   const sair = () => {
@@ -1841,7 +1852,7 @@ function exportCsv() {
     ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual }))
     : state.view === "detalhe" && state.grupo === "lancamento"
     ? state.result?.lancamento?.porNome || []
-    : state.view === "sobra" ? sobraPorComprador(state.result?.details || []).flatMap((c) => c.produtos.map((p) => ({ comprador: c.comprador, produto: p.produto, descricao: p.descricao, lojas: p.lojas, estoqueInicial: p.inicial, entradaEstoque: p.entrada, disponivel: p.disponivel, recebidoAutomatico: p.auto, recebidoManual: p.manual, venda: p.venda, sobra: p.sobra, percentualSobra: p.pct == null ? "" : p.pct, contaAberta: p.abertos, recebidoSemEntrada: p.recSemEntrada })))
+    : state.view === "sobra" ? sobraPorComprador(state.result?.details || [], { risco: sobraCfg.risco, sobraDias: sobraCfg.dias }).flatMap((c) => c.produtos.map((p) => ({ comprador: c.comprador, produto: p.produto, descricao: p.descricao, lojas: p.lojas, estoqueInicial: p.inicial, entrada: p.entrada, entradaAutomatica: Math.round(p.entAuto), entradaManual: Math.round(p.entManual), entradaSemPedido: Math.round(p.entSemPedido), vendeu: p.venda, estoqueFinal: p.sobra, percentualSobra: p.pct == null ? "" : p.pct, situacao: p.classe, lojasEmRisco: p.lojasRisco, contaAberta: p.abertos, recebidoSemEntrada: p.recSemEntrada })))
     : state.view === "lojas" ? state.result?.lojas || [] : state.view === "compradores" ? state.result?.compradores || [] : state.view === "datas" ? state.result?.datas || [] : currentRows();
   if (!rows.length) return;
   const headers = Object.keys(rows[0]);
