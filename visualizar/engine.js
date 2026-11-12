@@ -41,6 +41,24 @@ function isoFromBr(text) {
 
 const SAIDA_OPERACAO = new Set(["802", "902", "903"]);
 
+const CAUSA_CAMPO = {
+  "sem-pedido": "zeroSemPedido",
+  atrasado: "zeroAtrasado",
+  recebido: "zeroRecebido",
+  "recebido-sem-entrada": "zeroRecebidoSemEntrada",
+  cancelado: "zeroCancelado",
+};
+
+const CAMPOS_CAUSA = () => ({
+  zeroSemPedido: 0,
+  zeroAtrasado: 0,
+  zeroRecebido: 0,
+  zeroRecebidoSemEntrada: 0,
+  zeroCancelado: 0,
+  pendenteZeroQtd: 0,
+  pendenteZeroValor: 0,
+});
+
 function somarDia(map, key, dias) {
   let total = 0;
   for (const dia of dias) total += map.get(`${dia}|${key}`) || 0;
@@ -370,6 +388,7 @@ function analyze(input) {
         embalagem: 0,
         materia: 0,
         uso: 0,
+        ...CAMPOS_CAUSA(),
       });
     }
     return compradores.get(name);
@@ -396,6 +415,7 @@ function analyze(input) {
         manual: 0,
         ambos: 0,
         comAbastecimento: 0,
+        ...CAMPOS_CAUSA(),
       });
     }
     return lojas.get(id);
@@ -408,6 +428,16 @@ function analyze(input) {
     paresComVenda: sold.size,
     fecha: 0,
     aberta: 0,
+    janelaPares: 0,
+    janelaFecha: 0,
+    janelaAbaixo: 0,
+    janelaAcima: 0,
+    recebidoPares: 0,
+    recebidoQtd: 0,
+    recebidoSemEntradaPares: 0,
+    recebidoSemEntradaQtd: 0,
+    zero: 0,
+    ...CAMPOS_CAUSA(),
     movimento,
     naoFecha: estoqueInicial.naoFecha + estoqueFinal.naoFecha,
     semPosicaoVenda: 0,
@@ -525,10 +555,21 @@ function analyze(input) {
       if (hasBoth) {
         if (qi > EPS) buyer.posicionados += 1;
         const grew = ef > qi + EPS;
-        const encadeado = intervalo != null && Math.abs(intervalo) <= EPS;
-        irregular = movimento && partidaInicial != null && partidaFinal != null && (!fechaInicial || !fechaFinal);
-        if (movimento && grew && entradaDepois <= EPS) excecao = "sem-entrada";
-        else if (movimento && grew && encadeado && entradaDepois > EPS && entradaDepois + EPS < ef - qi) excecao = "entrada-insuficiente";
+        // Regra de 29/10/2026: a conta fecha em duas frentes. A linha de cada arquivo fecha (partida + entrada − saída = estoque)
+        // e a janela fecha (estoque inicial + entrada − saída − venda dos dias seguintes = estoque final).
+        const linhaAberta = movimento && partidaInicial != null && partidaFinal != null && (!fechaInicial || !fechaFinal);
+        const janelaAberta = movimento && conta != null && !fechaConta;
+        irregular = linhaAberta || janelaAberta;
+        if (conta != null) {
+          quality.janelaPares += 1;
+          if (fechaConta) quality.janelaFecha += 1;
+          else if (ef < conta) quality.janelaAbaixo += 1;
+          else quality.janelaAcima += 1;
+        }
+        // Sem entrada: o saldo subiu e nem a linha final nem o Entradas.txt registram entrada nos dias da conta.
+        // Entrada insuficiente: o saldo final está acima da conta, ou seja, subiu mais do que as entradas registradas explicam.
+        if (movimento && grew && entradaDepois <= EPS && entradaMov <= EPS) excecao = "sem-entrada";
+        else if (movimento && grew && conta != null && ef > conta + EPS) excecao = "entrada-insuficiente";
         if (irregular) {
           buyer.irregular += 1;
           storeRow.irregular += 1;
@@ -539,7 +580,7 @@ function analyze(input) {
           storeRow.excecaoSem += 1;
         }
         if (excecao === "entrada-insuficiente") buyer.excecaoInsuf += 1;
-        if (movimento && fechaInicial && fechaFinal) quality.fecha += 1;
+        if (movimento && !irregular) quality.fecha += 1;
       }
 
       if (!movimento && hasBoth && conta != null) {
@@ -587,6 +628,7 @@ function analyze(input) {
         vendaMov,
         conta,
         fechaConta,
+        diferencaConta: conta != null && ef != null ? ef - conta : null,
         entradaTexto: textoMov(false),
         saidaTexto: textoMov(true),
         final: ef,
@@ -632,6 +674,7 @@ function analyze(input) {
   const datas = [];
   const grupos = new Map();
   const modos = new Map();
+  const pedidos = new Map();
   if (input.automatico) {
     const rows = linesOf(input.automatico);
     for (let index = 1; index < rows.length; index += 1) {
@@ -663,6 +706,20 @@ function analyze(input) {
       if (!modos.has(key)) modos.set(key, { automatico: false, manual: false, qtdAutomatica: 0, qtdManual: 0 });
       const modo = modos.get(key);
       const recebida = num(parts[18]);
+      // Pedido da loja e produto: aprovado, recebido, cancelado e saldo pendente (QTDSALDO). O saldo é o da data de extração do arquivo.
+      if (!pedidos.has(key)) pedidos.set(key, { linhas: 0, aprovada: 0, recebida: 0, cancelada: 0, saldo: 0, valorSaldo: 0, previsaoPendente: "" });
+      const pedido = pedidos.get(key);
+      const saldoLinha = num(parts[20]);
+      pedido.linhas += 1;
+      pedido.aprovada += num(parts[16]);
+      pedido.recebida += recebida;
+      pedido.cancelada += num(parts[19]);
+      pedido.saldo += saldoLinha;
+      if (saldoLinha > EPS) {
+        pedido.valorSaldo += saldoLinha * num(parts[8]);
+        const previsao = isoFromBr(parts[23]);
+        if (previsao && (!pedido.previsaoPendente || previsao < pedido.previsaoPendente)) pedido.previsaoPendente = previsao;
+      }
       if (kind === "automatico") {
         modo.qtdAutomatica += recebida;
         if (recebida > EPS) modo.automatico = true;
@@ -711,6 +768,49 @@ function analyze(input) {
     row.manual = Boolean(modo?.manual);
     row.entradaAutomatica = modo?.qtdAutomatica || 0;
     row.entradaManual = modo?.qtdManual || 0;
+    // Quantidade recebida do pedido não é entrada no estoque. Só vira entrada se o estoque ou o Entradas.txt a registram.
+    const recebido = row.entradaAutomatica + row.entradaManual;
+    row.recebido = recebido;
+    row.recebidoSemEntrada = recebido > EPS && row.conta != null && (row.entradaMov || 0) <= EPS && (row.entradaInicial || 0) <= EPS && (row.entradaFinal || 0) <= EPS;
+    if (recebido > EPS && row.conta != null) {
+      quality.recebidoPares += 1;
+      quality.recebidoQtd += recebido;
+    }
+    if (row.recebidoSemEntrada) {
+      quality.recebidoSemEntradaPares += 1;
+      quality.recebidoSemEntradaQtd += recebido;
+    }
+    const pedido = pedidos.get(`${row.loja}|${row.produto}`);
+    row.pedidoLinhas = pedido ? pedido.linhas : 0;
+    row.pedidoAprovado = pedido ? pedido.aprovada : 0;
+    row.pedidoPendente = pedido && pedido.saldo > EPS ? pedido.saldo : 0;
+    row.pedidoPendenteValor = pedido && pedido.saldo > EPS ? pedido.valorSaldo : 0;
+    row.pedidoCancelado = pedido ? pedido.cancelada : 0;
+    row.pedidoPrevisao = pedido ? pedido.previsaoPendente : "";
+    // Dias de atraso até o último dia do período (domingo): data do estoque final menos o recebimento previsto mais antigo com saldo.
+    row.pedidoAtraso = row.pedidoPendente > EPS && row.pedidoPrevisao
+      ? Math.max(0, Math.round((Date.parse(`${ultimaData}T00:00:00Z`) - Date.parse(`${row.pedidoPrevisao}T00:00:00Z`)) / 86400000))
+      : null;
+    // Causa do estoque zero: uma só por par. Só vale onde há linha de estoque final com saldo zero (a mesma ruptura da tela).
+    row.causaZero = "";
+    if (row.situacao === "zero") {
+      if (!pedido) row.causaZero = "sem-pedido";
+      else if (row.pedidoPendente > EPS) row.causaZero = "atrasado";
+      else if (recebido > EPS) row.causaZero = row.recebidoSemEntrada ? "recebido-sem-entrada" : "recebido";
+      else row.causaZero = "cancelado";
+      quality.zero += 1;
+      const campo = CAUSA_CAMPO[row.causaZero];
+      quality[campo] += 1;
+      const buyerZero = ensureBuyer(row.comprador);
+      const storeZero = ensureStore(row.loja);
+      for (const alvo of [buyerZero, storeZero]) {
+        alvo[campo] += 1;
+        alvo.pendenteZeroQtd += row.pedidoPendente;
+        alvo.pendenteZeroValor += row.pedidoPendenteValor;
+      }
+      quality.pendenteZeroQtd += row.pedidoPendente;
+      quality.pendenteZeroValor += row.pedidoPendenteValor;
+    }
     if (!row.automatico && !row.manual) continue;
     const buyer = ensureBuyer(row.comprador);
     const storeRow = ensureStore(row.loja);
@@ -759,6 +859,49 @@ function analyze(input) {
   };
 }
 
+// Abastecimento e sobra por comprador (PRD 5.13). Entra só o par loja + produto com as duas linhas de estoque.
+// Disponível = estoque inicial + entrada no estoque (Entradas.txt na janela). Sobra = estoque final real do último dia.
+// Automático e manual são a QTDRECEBIDA do pedido: informação ao lado, fora da base do percentual.
+function sobraPorComprador(details) {
+  const compradores = new Map();
+  const novo = (c) => ({ comprador: c, inicial: 0, entrada: 0, auto: 0, manual: 0, disponivel: 0, venda: 0, sobra: 0, pares: 0, foraDaBase: 0, abertos: 0, recSemEntrada: 0, negativos: 0, mapa: new Map() });
+  for (const row of details) {
+    const nome = row.comprador || "Sem comprador";
+    let c = compradores.get(nome);
+    if (!c) { c = novo(nome); compradores.set(nome, c); }
+    if (row.inicial == null || row.final == null) { c.foraDaBase += 1; continue; }
+    const entrada = row.entradaMov || 0;
+    const negativo = row.final < -EPS;
+    const sobra = negativo ? 0 : row.final;
+    const aberto = Boolean(row.irregular);
+    let p = c.mapa.get(row.produto);
+    if (!p) {
+      p = { produto: row.produto, descricao: row.descricao, inicial: 0, entrada: 0, auto: 0, manual: 0, venda: 0, sobra: 0, lojas: 0, abertos: 0, recSemEntrada: 0 };
+      c.mapa.set(row.produto, p);
+    }
+    for (const alvo of [c, p]) {
+      alvo.inicial += row.inicial;
+      alvo.entrada += entrada;
+      alvo.auto += row.entradaAutomatica || 0;
+      alvo.manual += row.entradaManual || 0;
+      alvo.venda += row.quantidade || 0;
+      alvo.sobra += sobra;
+    }
+    p.lojas += 1;
+    c.pares += 1;
+    if (aberto) { p.abertos += 1; c.abertos += 1; }
+    if (row.recebidoSemEntrada) { p.recSemEntrada += 1; c.recSemEntrada += 1; }
+    if (negativo) c.negativos += 1;
+  }
+  // ajuste = o que a conta não explica: sobrou − (disponível − vendeu). Positivo: sobrou mais que a conta. Negativo: saiu mais (quebra, transferência, consumo).
+  const comPct = (o) => ({ ...o, disponivel: o.inicial + o.entrada, ajuste: o.sobra - (o.inicial + o.entrada - o.venda), pct: o.inicial + o.entrada > EPS ? o.sobra / (o.inicial + o.entrada) : null });
+  return [...compradores.values()].map((c) => {
+    const { mapa, ...resto } = c;
+    const produtos = [...mapa.values()].map(comPct).sort((a, b) => b.sobra - a.sobra || String(a.descricao).localeCompare(String(b.descricao), "pt-BR"));
+    return { ...comPct(resto), produtos };
+  }).filter((c) => c.pares > 0).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || a.comprador.localeCompare(b.comprador, "pt-BR"));
+}
+
 async function inflateRaw(bytes) {
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -800,6 +943,7 @@ async function lojasFromXlsx(buffer) {
 
 export {
   analyze,
+  sobraPorComprador,
   parseLojas,
   lojasFromXlsx,
   RETAIL,

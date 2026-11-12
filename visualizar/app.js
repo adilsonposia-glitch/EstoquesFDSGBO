@@ -1,9 +1,13 @@
-import { analyze, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=36";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=43";
+
+// Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
+const buscar = (url) => fetch(url, { cache: "no-store" });
 
 const VIEWS = [
   ["capa", "Capa"],
   ["lojas", "Lojas"],
   ["compradores", "Compradores"],
+  ["sobra", "Sobra por comprador"],
   ["ruptura", "Ruptura"],
   ["sem-venda", "Sem venda"],
   ["irregular", "Conta aberta"],
@@ -165,6 +169,16 @@ function stockFileDate(name) {
   return match[3] ? `${match[1]}-${month}-20${match[3]}` : `${match[1]}-${month}-`;
 }
 
+// Ordem cronológica de datas "dd-mm-aaaa". A ordem de texto erra quando a semana cruza o mês (29-10, 30-10, 31-10, 01-11).
+function chaveData(data) {
+  const [dia, mes, ano] = String(data).split("-");
+  return `${ano}${mes}${dia}`;
+}
+
+function porData(a, b) {
+  return chaveData(a).localeCompare(chaveData(b));
+}
+
 function estoqueDoDia(stockDate, salesDate) {
   if (!stockDate || !salesDate) return false;
   return stockDate.endsWith("-") ? salesDate.startsWith(stockDate) : stockDate === salesDate;
@@ -242,13 +256,61 @@ async function readHandle(handle) {
   return file.arrayBuffer();
 }
 
+// Nomes sem acento e em minúsculas, para "Automático.txt" valer como "Automatico.txt".
+function semAcento(texto) {
+  return String(texto).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+// Venda diária: "15-10-2026.txt" (data completa) ou "Vendas1510.txt" (dia e mês; o ano vem do arquivo de ofertas).
+function vendaDoNome(name) {
+  const completo = String(name).match(/^(\d{2}-\d{2}-\d{4})\.txt$/i);
+  if (completo) return { data: completo[1] };
+  const curto = String(name).match(/^vendas?\s*(\d{2})(\d{2})\.txt$/i);
+  if (curto) return { dia: curto[1], mes: curto[2] };
+  return null;
+}
+
+function anoNoTexto(texto) {
+  const achado = String(texto).split(/\r?\n/)[1] || "";
+  const ano = achado.match(/\b\d{2}[-/]\d{2}[-/](\d{4})\b/);
+  return ano ? ano[1] : "";
+}
+
+// Lê só o começo do arquivo de ofertas (DTAINICIO traz o ano do período).
+async function anoDaListagem(base, names) {
+  const nome = names.find((item) => semAcento(item).startsWith("ofertasdoper"));
+  if (!nome) return "";
+  const response = await buscar(`${base}${encodeURIComponent(nome)}`);
+  if (!response.ok || !response.body) return "";
+  const leitor = response.body.getReader();
+  let texto = "";
+  const decoder = new TextDecoder("windows-1252");
+  while (texto.split(/\r?\n/).length < 3) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    texto += decoder.decode(value, { stream: true });
+  }
+  await leitor.cancel();
+  return anoNoTexto(texto);
+}
+
+async function anoDoHandle(handle) {
+  const arquivo = await handle.getFile();
+  return anoNoTexto(decode(await arquivo.slice(0, 8192).arrayBuffer()));
+}
+
 async function collectFromDirectory(dir) {
   const found = { sales: [], stocks: [], buffers: {} };
+  const curtas = [];
   for await (const [name, handle] of dir.entries()) {
     if (handle.kind !== "file") continue;
-    const date = name.match(/^(\d{2}-\d{2}-\d{4})\.txt$/i);
-    if (date) {
-      found.sales.push({ date: date[1], handle });
+    const venda = vendaDoNome(name);
+    if (venda && venda.data) {
+      found.sales.push({ date: venda.data, handle });
+      continue;
+    }
+    if (venda) {
+      curtas.push({ venda, handle });
       continue;
     }
     const stockDate = stockFileDate(name);
@@ -256,7 +318,7 @@ async function collectFromDirectory(dir) {
       found.stocks.push({ date: stockDate, handle });
       continue;
     }
-    const key = name.toLowerCase();
+    const key = semAcento(name);
     if (key.startsWith("ofertasdoper")) {
       found.buffers.ofertas = handle;
       continue;
@@ -265,21 +327,46 @@ async function collectFromDirectory(dir) {
       found.buffers[key] = handle;
     }
   }
+  if (curtas.length) {
+    const ano = found.buffers.ofertas ? await anoDoHandle(found.buffers.ofertas) : "";
+    if (!ano) throw new Error("Não achei o ano do período no arquivo de ofertas. Os arquivos de venda vêm sem ano no nome.");
+    for (const item of curtas) found.sales.push({ date: `${item.venda.dia}-${item.venda.mes}-${ano}`, handle: item.handle });
+  }
   return found;
 }
 
 async function collectListing(base) {
-  const listing = await fetch(base);
+  const listing = await buscar(base);
   if (!listing.ok) throw new Error("sem listagem");
   const html = await listing.text();
   const names = [...html.matchAll(/href="([^"]+)"/g)].map((match) => decodeURIComponent(match[1].split("/").pop()));
-  const found = { sales: [] };
+  const found = { sales: [], arquivo: {} };
+  const curtas = [];
   for (const name of names) {
-    const date = name.match(/^(\d{2}-\d{2}-\d{4})\.txt$/i);
-    if (date) found.sales.push(date[1]);
+    const venda = vendaDoNome(name);
+    if (venda && venda.data) {
+      found.sales.push(venda.data);
+      found.arquivo[venda.data] = name;
+    } else if (venda) {
+      curtas.push({ venda, name });
+    }
   }
-  found.sales.sort();
+  if (curtas.length) {
+    const ano = await anoDaListagem(base, names);
+    if (!ano) throw new Error("Não achei o ano do período no arquivo de ofertas. Os arquivos de venda vêm sem ano no nome.");
+    for (const item of curtas) {
+      const data = `${item.venda.dia}-${item.venda.mes}-${ano}`;
+      found.sales.push(data);
+      found.arquivo[data] = item.name;
+    }
+  }
+  found.sales.sort(porData);
   return { names, found };
+}
+
+// Nome real do arquivo na pasta, sem depender de acento nem de maiúscula.
+function nomeNaPasta(names, alvo) {
+  return names.find((item) => semAcento(item) === semAcento(alvo)) || alvo;
 }
 
 async function lembrarSemanaDaRaiz() {
@@ -291,7 +378,7 @@ async function lembrarSemanaDaRaiz() {
   if (guardadas.some((item) => item.inicio === inicio)) return;
   const offerName = raiz.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
   if (!offerName) return;
-  const response = await fetch(`../${encodeURIComponent(offerName)}`);
+  const response = await buscar(`../${encodeURIComponent(offerName)}`);
   if (!response.ok) return;
   guardadas.push({ inicio, fim, produtos: produtosDoArquivoDeOferta(decode(await response.arrayBuffer())) });
   gravarSemanas(guardadas);
@@ -307,13 +394,13 @@ async function loadFromListing(base, discovered) {
   for (const date of discovered.found.sales) {
     step += 1;
     setProgress(step / jobs, `Lendo ${date}.txt`);
-    const response = await fetch(`${base}${encodeURIComponent(`${date}.txt`)}`);
+    const response = await buscar(`${base}${encodeURIComponent(discovered.found.arquivo[date] || `${date}.txt`)}`);
     sales.push({ date, text: decode(await response.arrayBuffer()) });
   }
   async function textFile(name) {
     step += 1;
     setProgress(step / jobs, `Lendo ${name}`);
-    const response = await fetch(`${base}${encodeURIComponent(name)}`);
+    const response = await buscar(`${base}${encodeURIComponent(name)}`);
     if (!response.ok) throw new Error(`Arquivo ausente: ${name}`);
     return decode(await response.arrayBuffer());
   }
@@ -334,14 +421,14 @@ async function loadFromListing(base, discovered) {
     inicio = await textFile(inicioName);
     fim = await textFile(fimName);
   }
-  const entradas = await textFile("Entradas.txt");
-  const dim = await textFile("Dimproduto.txt");
-  const automatico = await textFile("Automatico.txt");
+  const entradas = await textFile(nomeNaPasta(discovered.names, "Entradas.txt"));
+  const dim = await textFile(nomeNaPasta(discovered.names, "Dimproduto.txt"));
+  const automatico = await textFile(nomeNaPasta(discovered.names, "Automatico.txt"));
   const ofertas = await textFile(offerName);
   step += 1;
   setProgress(0.92, "Lendo Lojas.xlsx");
-  let lojasResponse = await fetch(`${base}${encodeURIComponent("Lojas.xlsx")}`);
-  if (!lojasResponse.ok) lojasResponse = await fetch("../Lojas.xlsx");
+  let lojasResponse = await buscar(`${base}${encodeURIComponent("Lojas.xlsx")}`);
+  if (!lojasResponse.ok) lojasResponse = await buscar("../Lojas.xlsx");
   if (!lojasResponse.ok) throw new Error("Arquivo ausente: Lojas.xlsx");
   const lojas = await lojasFromXlsx(await lojasResponse.arrayBuffer());
   return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
@@ -415,13 +502,13 @@ async function vendaDaRaiz() {
   const acc = { produtos: {}, lojas: {}, oferta: {}, total: 0, vendaOferta: 0 };
   for (const date of raiz.found.sales) {
     setProgress(0.9, `Lendo a semana anterior, ${date}.txt`);
-    const response = await fetch(`../${encodeURIComponent(`${date}.txt`)}`);
+    const response = await buscar(`../${encodeURIComponent(raiz.found.arquivo[date] || `${date}.txt`)}`);
     if (!response.ok) return null;
     somarVendaDiaria(decode(await response.arrayBuffer()), acc);
   }
   const offerName = raiz.names.find((name) => name.toLowerCase().startsWith("ofertasdoper"));
   if (offerName) {
-    const response = await fetch(`../${encodeURIComponent(offerName)}`);
+    const response = await buscar(`../${encodeURIComponent(offerName)}`);
     if (response.ok) somarOfertaPorLoja(decode(await response.arrayBuffer()), acc);
   }
   return {
@@ -436,6 +523,7 @@ async function vendaDaRaiz() {
 }
 
 const MARGEM = 0.05;
+const EPS_TELA = 0.05;
 
 function vendaAtualPorProduto(result) {
   const mapa = new Map();
@@ -507,7 +595,7 @@ function comparacaoVenda(result) {
 async function loadDirectory(dir) {
   const found = await collectFromDirectory(dir);
   const sales = [];
-  for (const item of found.sales.sort((a, b) => a.date.localeCompare(b.date))) {
+  for (const item of found.sales.sort((a, b) => porData(a.date, b.date))) {
     setProgress(0.2, `Lendo ${item.date}.txt`);
     sales.push({ date: item.date, text: decode(await readHandle(item.handle)) });
   }
@@ -546,9 +634,34 @@ async function loadDirectory(dir) {
   if (!found.buffers.ofertas) throw new Error("Falta o arquivo Ofertas do período.");
   setProgress(0.7, "Lendo Ofertas do período");
   const ofertas = decode(await readHandle(found.buffers.ofertas));
-  const lojasHandle = await required("Lojas.xlsx");
-  const lojas = await lojasFromXlsx(await readHandle(lojasHandle));
+  // Lojas.xlsx na pasta escolhida; sem ele, o da raiz do projeto (a pasta nova não precisa de cópia).
+  let lojasBuffer;
+  const lojasHandle = found.buffers["lojas.xlsx"];
+  if (lojasHandle) {
+    setProgress(0.45, "Lendo Lojas.xlsx");
+    lojasBuffer = await readHandle(lojasHandle);
+  } else {
+    const resposta = await buscar("../Lojas.xlsx");
+    if (!resposta.ok) throw new Error("Arquivo ausente: Lojas.xlsx");
+    lojasBuffer = await resposta.arrayBuffer();
+  }
+  const lojas = await lojasFromXlsx(lojasBuffer);
   return { sales, inicio, fim, entradas, dim, automatico, lojas, ofertas };
+}
+
+// Escolher pasta na "Entrada Novo Período" dá o mesmo resultado do Atualizar: compara com a semana da raiz.
+async function loadPickedDirectory(dir) {
+  const files = await loadDirectory(dir);
+  if (dir.name === "Entrada Novo Período") {
+    try {
+      state.qual = "periodo";
+      await lembrarSemanaDaRaiz();
+      files.anterior = await vendaDaRaiz();
+    } catch {
+      files.anterior = null;
+    }
+  }
+  return files;
 }
 
 function marcarSemanas() {
@@ -638,6 +751,7 @@ function currentRows() {
     if (state.grupo === "sem-entrada") rows = rows.filter((row) => row.excecao === "sem-entrada");
     if (state.grupo === "com-venda") rows = rows.filter((row) => row.vendeu);
     if (state.grupo === "sem-venda-total") rows = rows.filter((row) => !row.vendeu);
+    if (state.grupo.startsWith("zero-")) rows = rows.filter((row) => row.causaZero === state.grupo.slice(5));
     if (state.grupo === "so-automatico") rows = rows.filter((row) => row.automatico && !row.manual);
     if (state.grupo === "so-manual") rows = rows.filter((row) => row.manual && !row.automatico);
     if (state.grupo === "produto-sem-venda") {
@@ -807,8 +921,25 @@ function colunaVariacao() {
   };
 }
 
+const CAUSA_ZERO = {
+  "sem-pedido": ["Sem pedido na semana", "Estoque zero e nenhuma linha de pedido com recebimento previsto nos quatro dias. Pedido com entrega prevista depois do domingo não está no Automatico.txt, então não é visto."],
+  atrasado: ["Pedido atrasado", "Estoque zero e há saldo pendente de entrega (QTDSALDO) no pedido, com recebimento previsto dentro da semana. O saldo é o da data de extração do arquivo."],
+  recebido: ["Recebido e vendido", "Estoque zero, sem saldo pendente. O pedido foi recebido e a mercadoria saiu: a quantidade pedida não cobriu a venda."],
+  "recebido-sem-entrada": ["Recebido sem entrada", "Estoque zero, sem saldo pendente. O pedido consta como recebido, mas nem o estoque nem o Entradas.txt registram entrada. A mercadoria pode ter chegado depois do domingo."],
+  cancelado: ["Pedido cancelado", "Estoque zero e o pedido foi cancelado, sem saldo pendente e sem recebimento."],
+};
+
+function colunasPedido() {
+  return [
+    { key: "pedido-pendente", label: "Pedido pendente (un)", num: true, value: (row) => row.pedidoPendente, cell: (row) => (row.pedidoPendente > EPS_TELA ? qty(row.pedidoPendente) : ""), hint: (row) => row.pedidoLinhas ? `QTDSALDO do Automatico.txt na data de extração. Aprovado ${qty(row.pedidoAprovado)}, recebido ${qty((row.entradaAutomatica || 0) + (row.entradaManual || 0))}, cancelado ${qty(row.pedidoCancelado)}.` : "Nenhuma linha de pedido com recebimento previsto na semana." },
+    { key: "pedido-valor", label: "Pedido pendente (R$)", num: true, value: (row) => row.pedidoPendenteValor, cell: (row) => (row.pedidoPendenteValor > EPS_TELA ? money(row.pedidoPendenteValor) : ""), hint: () => "Saldo pendente vezes o custo unitário do pedido (VALORUNIT)." },
+    { key: "pedido-atraso", label: "Dias de atraso", num: true, value: (row) => row.pedidoAtraso, cell: (row) => (row.pedidoAtraso == null ? "" : qty(row.pedidoAtraso)), hint: () => "Do recebimento previsto mais antigo com saldo até o último dia do período (domingo)." },
+    { key: "causa-zero", label: "Causa do estoque zero", value: (row) => (row.causaZero ? CAUSA_ZERO[row.causaZero][0] : ""), cell: (row) => (row.causaZero ? CAUSA_ZERO[row.causaZero][0] : ""), hint: (row) => (row.causaZero ? CAUSA_ZERO[row.causaZero][1] : "") },
+  ];
+}
+
 function detailColumns() {
-  const pedido = () => "Quantidade recebida no pedido. Não entra na soma do estoque.";
+  const pedido = (row) => `Quantidade recebida no pedido (Automatico.txt). Não é entrada no estoque e não entra na soma.${row && row.recebidoSemEntrada ? " Neste par, nem o estoque nem o Entradas.txt registram entrada." : ""}`;
   const movimento = Boolean(state.result?.quality.movimento);
   const comuns = [
     { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
@@ -824,10 +955,11 @@ function detailColumns() {
       { key: "saida-mov", label: "Saída depois", num: true, value: (row) => row.saidaMov, cell: (row) => qty(row.saidaMov), hint: (row) => row.saidaTexto || "QTDITEM das operações 802, 902 e 903 nesses dias." },
       { key: "venda-mov", label: "Venda depois", num: true, value: (row) => row.vendaMov, cell: (row) => qty(row.vendaMov), hint: () => "Quantidade vendida nos dias posteriores ao saldo inicial, até a data do estoque final." },
       { key: "conta", label: "Estoque pela movimentação", num: true, value: (row) => row.conta, cell: (row) => qty(row.conta), hint: () => "Estoque inicial + entrada depois − saída depois − venda depois." },
-      { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
-      { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
+      { key: "entrada-aut", label: "Recebido automático (pedido)", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
+      { key: "entrada-man", label: "Recebido manual (pedido)", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
       { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final), hint: (row) => `Saldo do arquivo do último dia, na data ${dataBr(row.dataFinal)}.` },
       variacao,
+      ...colunasPedido(),
     ];
   }
   return [
@@ -836,17 +968,21 @@ function detailColumns() {
     { key: "entrada-ini", label: "Entrada inicial", num: true, value: (row) => row.entradaInicial, cell: (row) => qty(row.entradaInicial), hint: (row) => dataBr(row.dataInicial) },
     { key: "saida-ini", label: "Saída inicial", num: true, value: (row) => row.saidaInicial, cell: (row) => qty(row.saidaInicial), hint: (row) => dataBr(row.dataInicial) },
     { key: "inicial", label: "Estoque inicial", num: true, value: (row) => row.inicial, cell: (row) => qty(row.inicial), hint: (row) => equacaoEstoque(row.partidaInicial, row.entradaInicial, row.saidaInicial, row.inicial, row.dataInicial) },
-    { key: "entrada-aut", label: "Entrada automática", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
-    { key: "entrada-man", label: "Entrada manual", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
+    { key: "entrada-aut", label: "Recebido automático (pedido)", num: true, value: (row) => row.entradaAutomatica, cell: (row) => qty(row.entradaAutomatica), hint: pedido },
+    { key: "entrada-man", label: "Recebido manual (pedido)", num: true, value: (row) => row.entradaManual, cell: (row) => qty(row.entradaManual), hint: pedido },
     { key: "venda", label: "Quantidade vendida", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade), hint: () => "Quantidade dos quatro arquivos diários. A venda do dia do saldo inicial já está dentro desse saldo." },
     { key: "partida-fim", label: "Partida final", num: true, value: (row) => row.partidaFinal, cell: (row) => qty(row.partidaFinal), hint: (row) => dataBr(row.dataFinal) },
     { key: "entrada-fim", label: "Entrada final", num: true, value: (row) => row.entradaFinal, cell: (row) => qty(row.entradaFinal), hint: (row) => dataBr(row.dataFinal) },
     { key: "saida-fim", label: "Saída final", num: true, value: (row) => row.saidaFinal, cell: (row) => qty(row.saidaFinal), hint: (row) => dataBr(row.dataFinal) },
     { key: "final", label: "Estoque final", num: true, value: (row) => row.final, cell: (row) => qty(row.final), hint: (row) => equacaoEstoque(row.partidaFinal, row.entradaFinal, row.saidaFinal, row.final, row.dataFinal) },
+    { key: "entrada-mov", label: "Entrada depois (NF)", num: true, value: (row) => row.entradaMov, cell: (row) => qty(row.entradaMov), hint: (row) => row.entradaTexto || "QTDITEM de Entradas.txt nos dias posteriores ao saldo inicial, até a data do estoque final." },
+    { key: "saida-mov", label: "Saída depois", num: true, value: (row) => row.saidaMov, cell: (row) => qty(row.saidaMov), hint: (row) => row.saidaTexto || "QTDITEM das operações 802, 902 e 903 nesses dias." },
     { key: "venda-mov", label: "Venda depois", num: true, value: (row) => row.vendaMov, cell: (row) => qty(row.vendaMov), hint: () => "Venda dos dias posteriores ao saldo inicial, até a data do estoque final. A venda do dia inicial já está no saldo." },
-    { key: "conta", label: "Estoque pela movimentação", num: true, value: (row) => row.conta, cell: (row) => qty(row.conta), hint: () => "Estoque inicial + entrada desses dias − saída desses dias − venda desses dias." },
+    { key: "conta", label: "Estoque pela movimentação", num: true, value: (row) => row.conta, cell: (row) => qty(row.conta), hint: () => "Estoque inicial + entrada depois − saída depois − venda depois." },
+    { key: "diferenca-conta", label: "Diferença da conta", num: true, value: (row) => row.diferencaConta, cell: (row) => qty(row.diferencaConta), hint: (row) => row.diferencaConta == null ? "" : row.diferencaConta < -EPS_TELA ? "Estoque final abaixo da conta: saiu mais do que a venda e as saídas registradas explicam." : row.diferencaConta > EPS_TELA ? "Estoque final acima da conta: entrou mais do que as entradas registradas explicam." : "A conta fecha." },
     { key: "intervalo", label: "Intervalo", num: true, value: (row) => row.intervalo, cell: (row) => qty(row.intervalo), hint: () => "Partida do estoque fim menos o estoque inicial. Os dois arquivos não detalham os dias entre as datas." },
     variacao,
+    ...colunasPedido(),
   ];
 }
 
@@ -864,6 +1000,7 @@ function render() {
   else if (state.view === "detalhe") renderDetalhe();
   else if (state.view === "lojas") renderLojas(result);
   else if (state.view === "compradores") renderBuyers(result);
+  else if (state.view === "sobra") renderSobra(result);
   else if (state.view === "datas") renderDatas(result);
   else if (state.view === "central") renderCentral(result);
   else if (state.view === "qualidade") renderQuality(result);
@@ -879,6 +1016,8 @@ const CAPA_METRICS = [
   ["excesso", "Conta aberta", (row) => row.pares ? row.irregular / row.pares : 0, (row) => row.pares, (row) => row.irregular],
   ["sem-venda", "Sem venda com saldo", (row) => row.pares ? row.semVendaSaldo / row.pares : 0, (row) => row.pares, (row) => row.semVendaSaldo],
   ["sem-entrada", "Sem entrada", (row) => row.pares ? row.excecaoSem / row.pares : 0, (row) => row.pares, (row) => row.excecaoSem],
+  ["zero-atrasado", "Ruptura com pedido atrasado", (row) => row.ruptura ? row.zeroAtrasado / row.ruptura : 0, (row) => row.ruptura, (row) => row.zeroAtrasado],
+  ["zero-sem-pedido", "Ruptura sem pedido", (row) => row.ruptura ? row.zeroSemPedido / row.ruptura : 0, (row) => row.ruptura, (row) => row.zeroSemPedido],
 ];
 
 function productRows(details) {
@@ -902,6 +1041,8 @@ function productRows(details) {
         irregular: 0,
         semVendaSaldo: 0,
         excecaoSem: 0,
+        zeroAtrasado: 0,
+        zeroSemPedido: 0,
       };
       map.set(row.produto, item);
     }
@@ -917,6 +1058,8 @@ function productRows(details) {
     if (row.irregular) item.irregular += 1;
     if (!row.vendeu && row.situacao === "positivo") item.semVendaSaldo += 1;
     if (row.excecao === "sem-entrada") item.excecaoSem += 1;
+    if (row.causaZero === "atrasado") item.zeroAtrasado += 1;
+    if (row.causaZero === "sem-pedido") item.zeroSemPedido += 1;
   }
   return [...map.values()].sort((a, b) => a.descricao.localeCompare(b.descricao, "pt-BR"));
 }
@@ -942,6 +1085,8 @@ function classRows(details, campo) {
         irregular: 0,
         semVendaSaldo: 0,
         excecaoSem: 0,
+        zeroAtrasado: 0,
+        zeroSemPedido: 0,
       };
       map.set(nome, item);
     }
@@ -957,6 +1102,8 @@ function classRows(details, campo) {
     if (row.irregular) item.irregular += 1;
     if (!row.vendeu && row.situacao === "positivo") item.semVendaSaldo += 1;
     if (row.excecao === "sem-entrada") item.excecaoSem += 1;
+    if (row.causaZero === "atrasado") item.zeroAtrasado += 1;
+    if (row.causaZero === "sem-pedido") item.zeroSemPedido += 1;
   }
   return [...map.values()].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 }
@@ -972,6 +1119,7 @@ function campanha(result) {
   const soAuto = contagem((row) => row.automatico && !row.manual);
   const soManual = contagem((row) => row.manual && !row.automatico);
   const receberam = duas + soAuto + soManual;
+  const ruptura = contagem((row) => row.situacao === "zero");
   const sobrePares = "O percentual é sobre os pares loja e produto da oferta.";
   const sobreRecebidos = "O percentual é sobre os pares que receberam automático, manual ou os dois.";
   return [
@@ -986,15 +1134,24 @@ function campanha(result) {
       ["sem-venda", "Sem venda com saldo", contagem((row) => !row.vendeu && row.situacao === "positivo"), pares, `Par sem venda e com saldo do estoque fim maior que zero. Já entra em pares sem venda. ${sobrePares}`],
     ]],
     ["Estoque", "A variação é o estoque final menos o inicial, dividido pelo inicial. Positivo: o saldo terminou maior. Negativo: o saldo terminou menor.", [
-      ["excesso", "Conta aberta", contagem((row) => row.irregular), pares, result.quality.movimento ? `Partida + entrada − saída comparada ao ESTOQUE da própria linha, no arquivo inicial e no arquivo fim. Este número é o par em que a conta não fecha. ${sobrePares}` : `Estoque do primeiro dia + entrada dos dias seguintes − saída desses dias − venda desses dias, comparado ao estoque do último dia. Este número é o par em que a conta não fecha. ${sobrePares}`],
+      ["excesso", "Conta aberta", contagem((row) => row.irregular), pares, result.quality.movimento ? `Par em que a conta não fecha: a linha de um dos arquivos (partida + entrada − saída) não chega no ESTOQUE, ou a conta da janela (estoque inicial + entrada − saída − venda dos dias seguintes) não chega no estoque final. ${sobrePares}` : `Estoque do primeiro dia + entrada dos dias seguintes − saída desses dias − venda desses dias, comparado ao estoque do último dia. Este número é o par em que a conta não fecha. ${sobrePares}`],
       ["ruptura", "Ruptura", contagem((row) => row.situacao === "zero"), pares, `Saldo do estoque fim igual a zero, quando existe linha nesse arquivo. Par sem linha não entra. ${sobrePares}`],
       ["provavel", "Ruptura provável", contagem((row) => row.provavel), pares, `Houve venda e o saldo de domingo cobre menos de um dia do ritmo desta semana. ${sobrePares}`],
-      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada"), pares, result.quality.movimento ? `O estoque fim ficou maior que o inicial e a QTDENTRADA do estoque fim, em dia da semana e posterior ao inicial, está zerada. Pedido não entra nessa conta. ${sobrePares}` : `O estoque do último dia ficou maior que o do primeiro e a entrada desses dias está zerada. Pedido não entra nessa conta. ${sobrePares}`],
+      ["sem-entrada", "Sem entrada", contagem((row) => row.excecao === "sem-entrada"), pares, result.quality.movimento ? `O estoque fim ficou maior que o inicial e não há entrada nem na linha do estoque fim nem no Entradas.txt, nos dias depois do saldo inicial até a data do estoque fim. O pedido recebido não conta como entrada. ${sobrePares}` : `O estoque do último dia ficou maior que o do primeiro e a entrada desses dias está zerada. Pedido não entra nessa conta. ${sobrePares}`],
     ]],
     ["Abastecimento", "Modalidade pela quantidade recebida em Automatico.txt.", [
       ["ambos", "Duas modalidades", duas, receberam, `O par tem QTDRECEBIDA no automático e no manual. ${sobreRecebidos}`],
       ["so-automatico", "Só automático", soAuto, receberam, `QTDRECEBIDA automática maior que zero e manual igual a zero. ${sobreRecebidos}`],
       ["so-manual", "Só manual", soManual, receberam, `QTDRECEBIDA manual maior que zero e automática igual a zero. ${sobreRecebidos}`],
+    ]],
+    ["Causa da ruptura", `Cada par com saldo zero no estoque fim recebe uma causa só, pelo pedido do Automatico.txt. Total: ${itens(ruptura)} pares em ruptura. O saldo pendente é o da data de extração do arquivo. Pedido com entrega prevista depois do domingo não está no arquivo.`, [
+      ...Object.entries(CAUSA_ZERO).map(([id, [nome, texto]]) => [
+        `zero-${id}`,
+        nome,
+        contagem((row) => row.causaZero === id),
+        ruptura,
+        id === "atrasado" ? `${texto} Pendente nesses pares: ${qty(result.quality.pendenteZeroQtd)} unidades, ${money(result.quality.pendenteZeroValor)} a custo.` : texto,
+      ]),
     ]],
   ];
 }
@@ -1032,6 +1189,8 @@ function renderCapa(result) {
     excesso: ["Conta<br>aberta", "Conta aberta"],
     "sem-venda": ["Sem venda<br>com saldo", "Sem venda com saldo"],
     "sem-entrada": ["Sem<br>entrada", "Sem entrada"],
+    "zero-atrasado": ["Ruptura<br>pedido atrasado", "Parte das rupturas em que há saldo pendente de entrega no pedido"],
+    "zero-sem-pedido": ["Ruptura<br>sem pedido", "Parte das rupturas sem nenhum pedido com recebimento previsto na semana"],
   };
   const head = `${mostraVezes ? `<th class="num"><button type="button" class="sort" data-sort="vezes">Vezes<br>antes${sortMark("vezes")}</button></th>` : ""}${CAPA_METRICS.map(([id, name]) => {
     const [linha, dica] = capaHeads[id] || [name, name];
@@ -1069,7 +1228,7 @@ function renderCapa(result) {
       <article class="card">${dica("Venda dos itens de oferta menos o custo bruto da venda. É outra conta, separada do lucro bruto.", esc, true)}<span>Margem pelo custo bruto</span><strong>${money(rede.margem)}</strong><em>Venda − custo bruto</em></article>
     </div>
     ${htmlLancamento(result, esc)}
-    <div class="campanha-grade">${campanha(result).map(([titulo, resumo, linhas]) => `<article class="card campanha-col">${dica(resumo, esc, true)}<span class="campanha-titulo">${titulo}</span>${linhas.map(([id, nome, quantidade, base, texto]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : ""}><span class="stat-nome"><em>${nome}</em></span><span class="stat-fim"><span class="stat-num"><strong>${itens(quantidade)}</strong><small class="parte">${parte(quantidade, base)}</small></span>${dica(texto, esc)}</span></button>`).join("")}</article>`).join("")}</div>
+    <div class="campanha-grade">${campanha(result).map(([titulo, resumo, linhas]) => `<article class="card campanha-col${titulo === "Causa da ruptura" ? " campanha-larga" : ""}">${dica(resumo, esc, true)}<span class="campanha-titulo">${titulo}</span>${linhas.map(([id, nome, quantidade, base, texto]) => `<button type="button" class="stat" ${id ? `data-campanha="${id}" data-rotulo="${esc(nome)}"` : ""}><span class="stat-nome"><em>${nome}</em></span><span class="stat-fim"><span class="stat-num"><strong>${itens(quantidade)}</strong><small class="parte">${parte(quantidade, base)}</small></span>${dica(texto, esc)}</span></button>`).join("")}</article>`).join("")}</div>
     ${repeticao}
     <div class="switch">
       <button type="button" class="${state.foco === "comprador" ? "" : "secondary"}" data-foco="comprador">Por comprador</button>
@@ -1436,6 +1595,11 @@ function renderBuyers(result) {
     { key: "irregular", label: "Conta aberta", num: true, value: (row) => row.irregular, cell: (row) => qty(row.irregular) },
     { key: "sem-entrada", label: "Sem entrada", num: true, value: (row) => row.excecaoSem, cell: (row) => qty(row.excecaoSem) },
     { key: "sem-venda", label: "Sem venda com saldo", num: true, value: (row) => row.semVendaSaldo, cell: (row) => qty(row.semVendaSaldo) },
+    { key: "zero-sem-pedido", label: "Ruptura sem pedido", num: true, value: (row) => row.zeroSemPedido, cell: (row) => qty(row.zeroSemPedido) },
+    { key: "zero-atrasado", label: "Ruptura com pedido atrasado", num: true, value: (row) => row.zeroAtrasado, cell: (row) => qty(row.zeroAtrasado) },
+    { key: "zero-recebido", label: "Ruptura com pedido recebido", num: true, value: (row) => row.zeroRecebido + row.zeroRecebidoSemEntrada, cell: (row) => qty(row.zeroRecebido + row.zeroRecebidoSemEntrada) },
+    { key: "pendente-zero", label: "Pendente em ruptura (un)", num: true, value: (row) => row.pendenteZeroQtd, cell: (row) => qty(row.pendenteZeroQtd) },
+    { key: "pendente-zero-valor", label: "Pendente em ruptura (R$)", num: true, value: (row) => row.pendenteZeroValor, cell: (row) => money(row.pendenteZeroValor) },
     { key: "automatico", label: "Automático", num: true, value: (row) => row.automatico, cell: (row) => qty(row.automatico) },
     { key: "manual", label: "Manual", num: true, value: (row) => row.manual, cell: (row) => qty(row.manual) },
     { key: "pct-auto", label: "% automático", num: true, value: (row) => (row.automatico + row.manual) ? row.automatico / (row.automatico + row.manual) : null, cell: (row) => (row.automatico + row.manual) ? pct(row.automatico / (row.automatico + row.manual)) : "—" },
@@ -1444,6 +1608,28 @@ function renderBuyers(result) {
     { key: "uso", label: "Uso e consumo", num: true, value: (row) => row.uso, cell: (row) => qty(row.uso) },
   ], result.compradores));
   bindFilters(result.compradores);
+}
+
+const LIMITE_SOBRA = 30;
+function renderSobra(result) {
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const lista = sobraPorComprador(result.details);
+  const total = lista.reduce((s, c) => ({ inicial: s.inicial + c.inicial, entrada: s.entrada + c.entrada, venda: s.venda + c.venda, sobra: s.sobra + c.sobra, pares: s.pares + c.pares, fora: s.fora + c.foraDaBase }), { inicial: 0, entrada: 0, venda: 0, sobra: 0, pares: 0, fora: 0 });
+  const base = total.inicial + total.entrada;
+  const linha = (p) => `<tr><td class="txt">${esc(p.produto)}</td><td class="txt">${esc(p.descricao)}</td><td>${qty(p.inicial)}</td><td>${qty(p.entrada)}</td><td>${qty(p.auto)}</td><td>${qty(p.manual)}</td><td>${qty(p.venda)}</td><td>${qty(p.sobra)}</td><td>${p.pct == null ? "—" : pct(p.pct)}</td><td>${p.abertos ? `${p.abertos} de ${p.lojas}` : "—"}</td></tr>`;
+  const card = (c) => `
+    <article class="card sobra-card">
+      <header><h3>${esc(c.comprador)}</h3><b class="sobra-pct">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b></header>
+      <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em>Entrada</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em>Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Sobrou</em>${qty(c.sobra)}</span></p>
+      <p class="sobra-origem">Pedido recebido: <b>${qty(c.auto)}</b> automático · <b>${qty(c.manual)}</b> manual · ${c.produtos.length.toLocaleString("pt-BR")} produtos · ${c.pares.toLocaleString("pt-BR")} pares de loja${c.abertos ? ` · ${c.abertos.toLocaleString("pt-BR")} com conta aberta` : ""}${c.recSemEntrada ? ` · ${c.recSemEntrada.toLocaleString("pt-BR")} recebidos sem entrada no estoque` : ""}</p>
+      <details><summary>Produtos com mais sobra (${Math.min(LIMITE_SOBRA, c.produtos.length)} de ${c.produtos.length.toLocaleString("pt-BR")})</summary>
+        <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Descrição</th><th>Estoque inicial</th><th>Entrada</th><th>Pedido automático</th><th>Pedido manual</th><th>Vendeu</th><th>Sobrou</th><th>% sobra</th><th>Conta aberta (lojas)</th></tr></thead>
+        <tbody>${c.produtos.slice(0, LIMITE_SOBRA).map(linha).join("")}</tbody></table></div>
+      </details>
+    </article>`;
+  view.innerHTML = `
+    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível. Disponível = estoque inicial + entrada no estoque (Entradas.txt). Sobrou = estoque final real do último dia. Ajuste = o que a conta não explica (sobrou − (disponível − vendeu)): negativo é saída que nenhum arquivo traz, como quebra ou transferência; positivo é entrada não registrada. % sobra = sobrou ÷ disponível. Automático e manual são a quantidade recebida do pedido, ao lado: não entram na base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo. Soma de unidades de produtos diferentes: use o percentual para comparar e a lista para agir. Rede: ${pct(base > 0.05 ? total.sobra / base : 0)} de sobra em ${total.pares.toLocaleString("pt-BR")} pares; ${total.fora.toLocaleString("pt-BR")} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>
+    <div class="sobra-grade">${lista.map(card).join("")}</div>`;
 }
 
 function renderDatas(result) {
@@ -1491,6 +1677,14 @@ function renderQuality(result) {
       <article class="card"><span>Pares com venda</span><strong>${qty(quality.paresComVenda)}</strong></article>
       <article class="card"><span>Conta de saldo que fecha</span><strong>${qty(quality.fecha)}</strong></article>
       <article class="card"><span>Conta que não fecha</span><strong>${qty(quality.aberta)}</strong></article>
+      <article class="card"><span>Pares com a conta da janela</span><strong>${qty(quality.janelaPares)}</strong></article>
+      <article class="card"><span>Janela fecha</span><strong>${qty(quality.janelaFecha)}</strong></article>
+      <article class="card"><span>Final abaixo da conta</span><strong>${qty(quality.janelaAbaixo)}</strong></article>
+      <article class="card"><span>Final acima da conta</span><strong>${qty(quality.janelaAcima)}</strong></article>
+      <article class="card"><span>Pares com recebido do pedido</span><strong>${qty(quality.recebidoPares)}</strong><small>${qty(quality.recebidoQtd)} unidades</small></article>
+      <article class="card"><span>Recebido sem entrada no estoque</span><strong>${qty(quality.recebidoSemEntradaPares)}</strong><small>${qty(quality.recebidoSemEntradaQtd)} unidades</small></article>
+      <article class="card"><span>Ruptura (saldo zero)</span><strong>${qty(quality.zero)}</strong><small>${qty(quality.zeroSemPedido)} sem pedido · ${qty(quality.zeroAtrasado)} pedido atrasado · ${qty(quality.zeroRecebido)} recebido e vendido · ${qty(quality.zeroRecebidoSemEntrada)} recebido sem entrada · ${qty(quality.zeroCancelado)} cancelado</small></article>
+      <article class="card"><span>Pendente nas rupturas</span><strong>${qty(quality.pendenteZeroQtd)}</strong><small>unidades · ${money(quality.pendenteZeroValor)} a custo</small></article>
       <article class="card"><span>Linhas de estoque fora da conta</span><strong>${qty(quality.naoFecha)}</strong></article>
       <article class="card"><span>Vendeu sem linha de estoque</span><strong>${qty(quality.semPosicaoVenda)}</strong></article>
       <article class="card"><span>Entradas repetidas descartadas</span><strong>${qty(quality.entradasRepetidas)}</strong></article>
@@ -1518,6 +1712,7 @@ function exportCsv() {
     ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual }))
     : state.view === "detalhe" && state.grupo === "lancamento"
     ? state.result?.lancamento?.porNome || []
+    : state.view === "sobra" ? sobraPorComprador(state.result?.details || []).flatMap((c) => c.produtos.map((p) => ({ comprador: c.comprador, produto: p.produto, descricao: p.descricao, lojas: p.lojas, estoqueInicial: p.inicial, entradaEstoque: p.entrada, disponivel: p.disponivel, recebidoAutomatico: p.auto, recebidoManual: p.manual, venda: p.venda, sobra: p.sobra, percentualSobra: p.pct == null ? "" : p.pct, contaAberta: p.abertos, recebidoSemEntrada: p.recSemEntrada })))
     : state.view === "lojas" ? state.result?.lojas || [] : state.view === "compradores" ? state.result?.compradores || [] : state.view === "datas" ? state.result?.datas || [] : currentRows();
   if (!rows.length) return;
   const headers = Object.keys(rows[0]);
@@ -1562,7 +1757,7 @@ document.querySelector("#pick").onclick = async () => {
     return;
   }
   const dir = await window.showDirectoryPicker();
-  run(() => loadDirectory(dir));
+  run(() => loadPickedDirectory(dir));
 };
 document.querySelector("#export").onclick = exportCsv;
 render();

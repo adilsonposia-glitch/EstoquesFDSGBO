@@ -79,7 +79,8 @@ Uma pasta fixa. As vendas levam a data no nome. Os demais nomes são estáveis.
 | `EstoqueInicio.txt` | Saldo inicial, com partida, entrada e saída na mesma linha |
 | `EstoqueFim.txt` | Saldo final, com partida, entrada e saída na mesma linha |
 | `Estoque DDmmmAA.txt` | Posição, quando a pasta ainda não tem os dois arquivos acima. A quantidade é `ESTOQUE_DTBASE` |
-| `EstoqueDDmmm.txt` | Posição de sete colunas, sem espaço e sem ano no nome (`Estoque15Out.txt`). A quantidade é `EST_TOT`. Entra no lugar do arquivo de seis colunas |
+| `EstoqueDDmmm.txt` | Um arquivo por dia, sem espaço e sem ano no nome (`Estoque15Out.txt`). O cabeçalho decide a leitura: posição de sete colunas (`EST_TOT`, entrega de 26/10) ou movimento de sete colunas (`ESTOQUE`, entrega de 29/10). Entra no lugar do arquivo de seis colunas |
+| `VendasDDMM.txt` | Mesma venda do dia que `dd-mm-aaaa.txt`, com dia e mês no nome (`Vendas1510.txt`). O ano vem do arquivo de ofertas (`DTAINICIO`). Desde 29/10/2026 a leitura aceita os dois nomes |
 | `Entradas.txt` | Entradas do período, em unidade de venda. Não entra na conta do estoque |
 | `Dimproduto.txt` | Comprador e hierarquia `N1` a `N4` |
 | `Embalagem.txt` | Padrão de compra e de transferência |
@@ -92,7 +93,9 @@ Formato dos TXT: separador `;`, decimal com vírgula, codificação Windows-1252
 
 O arquivo de seis colunas, quando é ele que a pasta traz, continua nesta ordem: `EMPRESA`, `NOME_EMPRESA`, `SEQPRODUTO`, `DESCCOMPLETA`, `ESTOQUE_DTBASE`, `DT_BASE`. A quantidade é `ESTOQUE_DTBASE`. Nesse caso a entrada e a saída não são inventadas.
 
-O arquivo de posição de sete colunas (a partir de 26/10/2026) tem esta ordem: `EMPRESA`, `SEQPRODUTO`, `DESCRICAO`, `CUSTO_UN_BRUTO`, `EST_TOT`, `CUSTO_TOT_BRUTO`, `DATA_BASE`. O decimal é ponto e o milhar é vírgula (`1,368.00` é 1.368). A data é `aaaa-mm-dd-hh.mm.ss.ffffff`. O arquivo do primeiro dia traz o saldo inicial do período, com a venda desse dia já dentro. O arquivo do último dia traz o saldo final. A linha que não existe em um dos dois arquivos não vira saldo zero: o par fica sem posição. Na semana de 15 a 18/10 o arquivo do dia 18 não traz a central (70), e a tela da central avisa isso em vez de mostrar zeros.
+O arquivo de posição de sete colunas (a partir de 26/10/2026) tem esta ordem: `EMPRESA`, `SEQPRODUTO`, `DESCRICAO`, `CUSTO_UN_BRUTO`, `EST_TOT`, `CUSTO_TOT_BRUTO`, `DATA_BASE`. O decimal é ponto e o milhar é vírgula (`1,368.00` é 1.368). A data é `aaaa-mm-dd-hh.mm.ss.ffffff`. O arquivo do primeiro dia traz o saldo inicial do período, com a venda desse dia já dentro. O arquivo do último dia traz o saldo final. A linha que não existe em um dos dois arquivos não vira saldo zero: o par fica sem posição. Na entrega de 26/10 para 15 a 18/10 o arquivo do dia 18 não trazia a central (70), e a tela da central avisa isso em vez de mostrar zeros.
+
+Entrega de 29/10/2026 para 15 a 18/10. `Estoque15Out.txt` e `Estoque18Out.txt` foram trocados por arquivos de movimento de sete colunas (`NROEMPRESA;SEQPRODUTO;ULTDTAMOVIMENTO;QTDINICIAL;QTDENTRADA;QTDSAIDA;ESTOQUE`), com as 22 empresas, a central (70) inclusa. A coluna `ESTOQUE` do arquivo do dia 15 é o estoque inicial do período e a do dia 18 é o estoque final. A leitura detecta o cabeçalho e segue o mesmo caminho do `EstoqueInicio.txt` e `EstoqueFim.txt`: cada linha fecha, e entrada e saída vêm da própria linha. Os nomes `Automático.txt` (com acento) e `Ofertasdoperiodo.txt` (sem acento) valem como `Automatico.txt` e `OfertasdoPeríodo.txt`.
 
 O arquivo de ofertas traz `NROSEGMENTO`. Os quatro arquivos de venda do dia não têm coluna de segmento. `NRODOCTOS` é a quantidade de documentos, não o segmento.
 
@@ -102,7 +105,7 @@ Chaves:
 - Produto: `IDPRODUTO` = `SEQPRODUTO` = `ID_PRODUTO`.
 - Comprador da análise: `Dimproduto.COMPRADOR`. A coluna `COMPRADOR` de `Automatico.txt` não identifica a pessoa.
 
-Ciclo das pastas (a partir de 26/10/2026). A semana nova fica em `Entrada Novo Período`. A semana anterior fica na raiz do projeto e serve à comparação de venda. A semana que sai da raiz vai para `Semanas anteriores\<período>`, com os arquivos intactos e com `Dimproduto.txt` e `Lojas.xlsx` junto, para a pasta poder ser aberta por **Escolher pasta**. Nesta data: `Entrada Novo Período` tem 15 a 18/10, a raiz tem 08 a 11/10 e `Semanas anteriores\01-04 Out 2026` guarda a semana de prova. Os arquivos de 08 a 11/10 que haviam sido sobrescritos na pasta nova (`OfertasdoPeríodo.txt`, `Entradas.txt`, `Automatico.txt`, `Embalagem.txt`) foram recuperados do último commit, com o mesmo tamanho em bytes que tinham antes.
+Ciclo das pastas (a partir de 26/10/2026). A semana nova fica em `Entrada Novo Período`. A semana anterior fica na raiz do projeto e serve à comparação de venda. A semana que sai da raiz vai para `Semanas anteriores\<período>`, com os arquivos intactos e com `Dimproduto.txt` e `Lojas.xlsx` junto, para a pasta poder ser aberta por **Escolher pasta**. Nesta data: `Entrada Novo Período` tem 15 a 18/10, a raiz tem 08 a 11/10 e `Semanas anteriores\01-04 Out 2026` guarda a semana de prova. Em 29/10/2026 chegaram novos arquivos de 15 a 18/10 e os anteriores saíram da pasta para `Arquivos substituídos 29-10-2026` (vendas `15-10-2026.txt` a `18-10-2026.txt`, `OfertasdoPeríodo.txt`, `Automatico.txt` e a cópia `Entradas (1).txt`). As versões antigas de `Estoque15Out.txt`, `Estoque18Out.txt`, `Embalagem.txt` e `Entradas.txt` ficam no commit `9a0d1a7`. Os arquivos de 08 a 11/10 que haviam sido sobrescritos na pasta nova (`OfertasdoPeríodo.txt`, `Entradas.txt`, `Automatico.txt`, `Embalagem.txt`) foram recuperados do último commit, com o mesmo tamanho em bytes que tinham antes.
 
 Na primeira execução o usuário indica a pasta. Nas seguintes, troca os arquivos e aperta **Atualizar**. O botão só calcula se a validação passar.
 
@@ -172,19 +175,25 @@ A quantidade recebida do pedido fica nas colunas automática e manual. A quantid
 
 Pasta sem `EstoqueInicio.txt` e `EstoqueFim.txt` usa a coluna `ESTOQUE_DTBASE`. A do arquivo do primeiro dia é o estoque inicial do período. A do arquivo do último dia é o estoque final. A venda do dia do saldo inicial já está dentro desse saldo. A conta soma só os dias posteriores a essa data, até a data do estoque final: entrada `QTDITEM`, menos a saída das operações 802, 902 e 903, menos a quantidade vendida. O resultado se compara ao estoque final. Diferença que não está nos arquivos não vira saída.
 
+**Conta da janela.** É a conta que decide se um par fecha: estoque inicial + entradas do `Entradas.txt` − saídas − venda dos dias D, com D1 < D ≤ D2, onde D1 e D2 são as datas de `ULTDTAMOVIMENTO` da linha inicial e da linha final. A tolerância é 0,05 unidade. Se o estoque final for igual à conta, o par fecha. Se for menor, saiu mais do que venda e saídas registradas explicam (quebra, transferência de saída, consumo ou ajuste que nenhum arquivo traz). Se for maior, entrou mais do que as entradas registradas explicam. A diferença é mostrada em “Diferença da conta” e não é atribuída a causa nenhuma.
+
+**Limite do `Entradas.txt`.** As operações de saída (801, 802, 903) vêm com `QTDITEM` zero e `QTDEMBALITEM` 1. A saída delas não tem quantidade em unidades, e a conta não a usa. Na semana de 22 a 25/10 só 3 dos 1.224 pares com estoque final abaixo da conta têm uma dessas operações na janela. Elas não explicam a diferença.
+
+**Validação por etapa.** Cada etapa das seções 2 a 5 é conferida por `testes/validar_etapas.mjs`, que recalcula a etapa direto dos arquivos crus (sem usar o `engine.js`) e compara com o resultado do `engine.js`: período e dias seguidos (etapa 1), venda diária e total (2), venda da oferta e participação (3), partida + entrada − saída = estoque em cada linha dos dois arquivos (4), encadeamento das duas linhas (5), conta da janela (6), pedido recebido contra entrada (7), ruptura, saldo negativo, cobertura e sem venda (8) e exceções do estoque que subiu (9). Uso: `node testes/validar_etapas.mjs "Entrada Novo Período"`. O resultado `[FALHA]` indica número da tela diferente do arquivo. `[ACHADO]` indica fato do dado, como a conta que não fecha, que é informado e não corrigido. Nenhuma semana é publicada com `[FALHA]`.
+
 A variação do estoque é o estoque final menos o inicial, dividido pelo inicial. Percentual positivo: o saldo terminou maior. Percentual negativo: o saldo terminou menor. Não há corte inventado para “entrou demais” ou “entrou de menos”. A ordenação dessa coluna mostra os extremos.
 
 Os números de estoque publicados na seção 10 permanecem os reapurados em 20/10. Esta conta vale para a semana aberta na capa.
 
 ### 5.4 Conta aberta e sem entrada
 
-Conta aberta é o par loja + produto em que partida + entrada − saída não chega no `ESTOQUE` da própria linha, no arquivo inicial ou no arquivo fim.
+Conta aberta é o par loja + produto em que vale uma de duas condições: (a) partida + entrada − saída não chega no `ESTOQUE` da própria linha, no arquivo inicial ou no arquivo fim (linha aberta); ou (b) a conta da janela da seção 5.3 não fecha, com o estoque final acima ou abaixo da conta (janela aberta). A regra anterior olhava só (a), e por isso mostrava par que não fechava como par fechado. Os números de conta aberta publicados antes de 29/10 (08–11 e 15–18) seguem a regra anterior.
 
-Sem entrada é o par em que o estoque fim ficou maior que o inicial e a `QTDENTRADA` do estoque fim, em dia da semana e posterior ao movimento inicial, está zerada. O pedido não conta como essa entrada.
+Sem entrada é o par em que o estoque final ficou maior que o inicial e não há entrada visível: nem `QTDENTRADA` na linha do estoque, antes ou depois do movimento inicial, nem linha do par no `Entradas.txt` dentro da janela. O pedido não conta como essa entrada. Na regra anterior só a linha final do estoque contava, e a semana de 22 a 25/10 daria 842 pares sem entrada, dos quais 841 têm a entrada no `Entradas.txt`. Pela regra atual são 1.
 
-A entrada insuficiente fica no caso em que as duas linhas se encadeiam, o saldo subiu, houve `QTDENTRADA` na linha final e essa entrada foi menor do que o aumento.
+Entrada insuficiente é o par em que as duas linhas se encadeiam, o saldo subiu, houve entrada e o estoque final ficou acima da conta da janela, isto é, entrou mais do que o registrado.
 
-Sem os dois arquivos de movimento, conta aberta e sem entrada ficam sem leitura. Não se completa com `Entradas.txt`.
+Sem os dois arquivos de movimento, conta aberta e sem entrada ficam sem leitura. O `Entradas.txt` entra só na conta da janela e na regra de sem entrada, com os arquivos de movimento.
 
 ### 5.5 Ruptura
 
@@ -237,9 +246,9 @@ Produto nas duas sistemáticas em lojas diferentes não entra nessa comparação
 
 A coluna exibida de entrada automática e a de entrada manual somam `QTDRECEBIDA` de `Automatico.txt` (posição 18), por loja e produto. A modalidade usa a mesma coluna `COMPRADOR` da seção 5.7. Uma modalidade conta para o par quando a quantidade recebida passa de 0,05.
 
-A conta do saldo, a conta aberta e a sem entrada usam `EstoqueInicio.txt` e `EstoqueFim.txt`. A quantidade recebida do pedido não entra nessa conta.
+A conta do saldo, a conta aberta e a sem entrada usam os dois arquivos de estoque e o `Entradas.txt`. A quantidade recebida do pedido não entra nessa conta, porque `QTDRECEBIDA` é a quantidade do pedido recebida, e não é a entrada no estoque.
 
-Um par pode ter `QTDRECEBIDA` maior que zero e `QTDENTRADA` zerada no estoque. O pedido não substitui a entrada escrita no estoque.
+Um par pode ter `QTDRECEBIDA` maior que zero e nenhuma entrada no estoque. O pedido não substitui a entrada escrita no estoque. A tela indica esses pares como “recebido sem entrada”: recebido acima de 0,05 e nenhuma entrada visível (`QTDENTRADA` das linhas de estoque e `Entradas.txt`). Em 22 a 25/10 são 829 pares (106.959 unidades), e em 702 deles a conta da janela fecha sem essa quantidade, o que mostra que ela não entrou no estoque até o dia 25. O `Automatico.txt` foi extraído depois do domingo (a coluna `DTAMOVIMENTO` vai até 28/10), então `QTDRECEBIDA` pode incluir mercadoria que chegou depois de 25/10, dia do estoque final. Para esses pares o arquivo não permite separar “não chegou” de “chegou depois do domingo”. É o caso dos produtos 38910 e 38914: recebido 24 e 60, estoque inicial 1, entrada 0, venda 1, estoque final 0. A conta 1 + 0 − 0 − 1 = 0 fecha, e o estoque zerado é real.
 
 ### 5.10 Nome da oferta e segmento
 
@@ -260,6 +269,34 @@ A venda do produto é `VLRVENDA` dos arquivos diários, somada nas 13 lojas. Nã
 Entre os produtos que repetiram na oferta, a capa separa quatro grupos: vendeu mais, vendeu menos, sem venda nas duas semanas e passou a vender. Entre os que estrearam, a capa lista os que não venderam nesta semana. O estreante não estava na oferta da semana anterior, então essa semana não entra como venda. Sem venda nas duas semanas é só de quem repetiu, e fica para a RP. Ruptura não entra nesta comparação.
 
 A participação por loja continua sendo `VLRTOTALVDA` da oferta dividido pela venda da loja. A capa mostra as duas semanas lado a lado quando a anterior ainda está na raiz.
+
+### 5.12 Causa da ruptura pelo pedido
+
+O objetivo da análise é a qualidade do abastecimento do item em oferta. Por isso cada par loja + produto em ruptura (saldo zero no estoque final, a mesma ruptura da seção 5.5) recebe uma causa só, lida em `Automatico.txt` nas linhas de revenda (automático e manual; embalagem, matéria-prima e uso e consumo ficam de fora). Por par, somam-se `QTDSALDO` (saldo pendente), `QTDRECEBIDA` e `QTDCANCELADA`. Em toda linha, aprovada − recebida − cancelada = saldo, e item cancelado não deixa saldo. A ordem de decisão:
+
+1. **Sem pedido na semana:** nenhuma linha de pedido do par com recebimento previsto nos quatro dias. O arquivo não traz pedido com entrega prevista depois do domingo (o usuário informou que esse arquivo não existe), então o rótulo é “na semana”, e não “sem pedido”.
+2. **Pedido atrasado:** o saldo pendente do par é maior que 0,05. Mostra quantidade pendente, valor (saldo × `VALORUNIT`) e dias de atraso, que é o último dia do período menos o recebimento previsto mais antigo com saldo.
+3. **Recebido e vendido:** sem saldo, com recebido maior que 0,05 e alguma entrada visível no estoque ou no `Entradas.txt`.
+4. **Recebido sem entrada:** sem saldo, com recebido maior que 0,05 e nenhuma entrada visível. A mercadoria pode ter chegado depois do domingo (seção 5.9).
+5. **Pedido cancelado:** sem saldo e sem recebimento.
+
+O saldo pendente é o da data de extração do arquivo, não o do domingo. O par com saldo negativo não é ruptura e não recebe causa. A tela mostra a causa na capa (cartão “Causa da ruptura” e as colunas “Ruptura com pedido atrasado” e “Ruptura sem pedido”, por comprador, loja, produto, departamento e seção), no detalhe (pendente em unidades e em reais, dias de atraso e causa) e na aba Compradores (pendente em ruptura). A decisão não tomada pelo comprador é o grupo 2: saldo pendente e estoque zero, sem cancelamento nem novo pedido.
+
+### 5.13 Abastecimento e sobra por comprador
+
+Leitura simples para a diretoria: um card por comprador (aba "Sobra por comprador" e seção do resumo executivo), com a conta da esquerda para a direita.
+
+`estoque inicial + entrada no estoque = disponível`, `− vendeu ± ajuste → sobrou`, `% sobra = sobrou ÷ disponível`.
+
+- **Entrada no estoque** é a do `Entradas.txt` nos dias da conta da janela (a mesma da seção 5.3). A quantidade recebida do pedido (automático e manual, seção 5.9) aparece ao lado e fica fora da base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo.
+- **Sobrou** é o estoque final real do último dia. Saldo negativo conta como zero.
+- **Ajuste** = sobrou − (disponível − vendeu). Negativo: saiu mais do que a venda explica (quebra, transferência, consumo). Positivo: entrou mais do que o arquivo de entradas registra. Faz o card fechar sem esconder a diferença da conta.
+- Contam só os pares loja + produto com as duas linhas de estoque. Os demais ficam fora e o número aparece no texto.
+- O percentual compara compradores. A soma de unidades mistura produtos diferentes, por isso cada card traz a lista dos produtos com mais sobra (ordem da sobra em unidades, 30 na tela, 10 no resumo), somados nas 13 lojas. A exportação em CSV traz todos.
+- Os compradores ficam em ordem do % sobra. Não há corte para "sobra demais".
+- Não há sobra em reais: o custo só existe onde houve venda.
+- Função: `sobraPorComprador()` em `visualizar/engine.js`. Validação: etapa 11 de `testes/validar_etapas.mjs`, que recalcula inicial, entrada, venda e sobra de cada comprador direto dos arquivos crus.
+- Semana 29/10 a 01/11: sobra de 79,25% na rede (disponível 2.491.793, sobrou 1.974.738, ajuste +125.798) em 21.906 pares. A semana de 22 a 25/10 deu 76,32%.
 
 ## 6. O que a tela mostra
 
@@ -389,6 +426,8 @@ Esses números não substituem a seção 10. A prova de 01 a 04 permanece.
 
 ### 10.2 Comparação 15–18 contra 08–11
 
+Os números desta seção são da entrega de 26/10. A entrega de 29/10 mudou o estoque e o arquivo de ofertas, e está na seção 10.3.
+
 A capa de 26/10 lê `Entrada Novo Período` (15 a 18/10/2026) e compara com a raiz (08 a 11/10/2026). A semana de 08 a 11/10 reproduz os números da seção 10.1 depois da mudança de pastas (1.130 produtos, R$ 5.141.303,80, 47,37%, 10.135 pares com as duas linhas, ruptura 560, sem entrada 713). A semana de 01 a 04/10, arquivada, reproduz a seção 10 (2.665 produtos, R$ 6.816.656,97, 58,02%, ruptura 3.132, provável 131, sem entrada 28).
 
 Semana de 15 a 18/10. Oferta de 2.545 produtos e `VLRTOTALVDA` de 5.734.977,39 (+11,55% sobre a semana anterior). Venda total das lojas 10.373.687,14 (−4,42%). Participação 55,28% (47,37% antes). A participação subiu nas 13 lojas. As maiores altas em pontos: Barra 26,4% para 40,6% (+14,2), Abelardo 39,2% para 52,1% (+12,9), depois Tanque 49,4% para 58,3% (+8,9) e Cascadura 53,1% para 62,0% (+8,9). A menor alta foi a do Terreirão, 55,0% para 56,1% (+1,1).
@@ -400,6 +439,54 @@ Abastecimento: 28,31% das linhas de revenda da oferta foram automáticas (1.442 
 Estoque, pela posição de `EST_TOT`. Dos 33.085 pares loja + produto da oferta, 10.239 têm as duas linhas (dia 15 e dia 18), 12.814 têm a linha do dia 18 e 13.966 a do dia 15. Entre os 10.239: o saldo terminou menor em 9.172, maior em 1.053 e igual em 14. A conta pela movimentação (saldo do dia 15 + entrada − saída − venda de 16, 17 e 18) fecha em 8.410 pares e fica aberta em 1.829: em 1.698 o saldo do arquivo ficou abaixo da conta e em 131 ficou acima. A diferença não é atribuída a causa nenhuma, porque não há arquivo de transferência de saída nem de quebra. Pares com venda e sem linha no dia 18: 5.837 de 18.616. Pares só no dia 15 com saldo positivo: 3.462 (na oferta, nas 13 lojas). A linha ausente não é tratada como saldo zero. A tela da central não calcula, porque o dia 18 não traz a empresa 70. Ruptura pelo saldo do dia 18: 112. Saldo negativo: 509. Ruptura provável: 310. Sem entrada: 57. Esses valores de estoque cobrem só os pares com linha e não são comparáveis com os de 08 a 11/10, que vêm do arquivo de movimento.
 
 Arroz 12269, loja 12: 437 + 2 − 0 − 77 = 362, e o arquivo do dia 18 traz 359. A diferença de 3 fica aberta.
+
+### 10.3 Entrega de 29/10/2026 para 15–18
+
+Mesma semana, arquivos novos. Os números abaixo saem do `engine.js` rodado no Node com a pasta `Entrada Novo Período` desta data (com o arquivo de ofertas de 26/10, pela decisão descrita no fim da seção). A capa não foi aberta no navegador nesta rodada.
+
+Venda diária. Os quatro arquivos `Vendas1510.txt` a `Vendas1810.txt` têm as mesmas linhas e o mesmo total de `VLRVENDA` dos `15-10-2026.txt` a `18-10-2026.txt` (2.604.344,20; 2.618.283,99; 2.759.485,79; 2.391.573,16; soma 10.373.687,14). Mudaram só descrições de produto, em 31 a 34 linhas por dia. A comparação com 08 a 11 não muda: 852 repetidos, 1.693 estreantes, 278 que saíram.
+
+Estoque. Os dois arquivos agora são de movimento e trazem as 22 empresas, com a central. Dos 33.085 pares loja + produto da oferta, 23.413 têm linha nos dois dias (antes eram 10.239), e todos fecham pela conta da própria linha. Pares com venda e sem linha no dia 18: 508 (antes, 5.837). Ruptura 1.399, saldo negativo 655, ruptura provável 369, sem entrada 1.417. A central tem linha nos dois dias e a tela dela calcula.
+
+Automático. `Automático.txt` tem 1.442 linhas automáticas e 3.653 manuais da oferta (28,30%). A entrega de 26/10 tinha 1.442 e 3.652 (28,31%). `Embalagem.txt` tem 69 linhas novas e 9 a menos. `Entradas.txt` tem as mesmas linhas da entrega anterior (a cópia `Entradas (1).txt` era idêntica).
+
+Ofertas. `Ofertasdoperiodo.txt` tem as mesmas 2.545 produtos e as mesmas 120.423 linhas da entrega anterior. `VLRTOTALVDA` subiu de R$ 5.734.977,39 para R$ 7.209.980,48 (+R$ 1.475.003,09, em 12.501 pares loja + produto). Com esse arquivo, a participação passa de 55,28% para 69,50% sobre o mesmo total de R$ 10.373.687,14. A alta está nas promoções que terminam depois de 18/10: as que terminam até 18/10 têm o mesmo valor nos dois arquivos (R$ 338.000,45; 14.185,16; 1.895,32 e 2.783.745,00), e as que terminam em 28/10 foram de R$ 1.875.391,61 para R$ 2.968.631,98. Em 14.955 pares o valor da oferta supera a venda dos quatro dias da loja, contra 12.859 na entrega anterior. Pelo que os dois arquivos mostram, `VLRTOTALVDA` acumula a venda da promoção até o dia em que o arquivo foi extraído, e não só os quatro dias. Por isso a participação de 69,50% não é a de 15 a 18. Nos arquivos de 08 a 11 e de 01 a 04, a última alteração de linha é de 16/10 e de 09/10, ou seja, perto do fim de cada semana; este de 15 a 18 tem alteração até 28/10. Decisão do usuário em 29/10/2026: vale o arquivo de ofertas de 26/10 (R$ 5.734.977,39 e 55,28%). Ele voltou para `Entrada Novo Período` como `OfertasdoPeríodo.txt`, e o de hoje ficou em `Arquivos substituídos 29-10-2026\Ofertasdoperiodo (extraído em 28-10).txt`. Com ele, a participação por loja é a da seção 10.2.
+
+### 10.4 Validação por etapa (29/10/2026)
+
+`testes/validar_etapas.mjs` rodou nas quatro semanas e todas as etapas conferem com o arquivo (nenhum `[FALHA]`). Os achados do dado, que são fatos dos arquivos e não erros de cálculo:
+
+| Semana | Pares com as duas linhas | Conta fecha | Final abaixo da conta | Final acima da conta | Recebido sem entrada visível |
+|---|---|---|---|---|---|
+| 22–25/10 | 7.749 | 6.503 (83,92%) | 1.224 | 22 | 829 pares |
+| 15–18/10 | 23.413 | 21.381 (91,32%) | 1.941 | 91 | 1.654 pares |
+| 08–11/10 | 10.135 | 8.692 (85,76%) | 1.386 | 57 | 961 pares |
+| 01–04/10 | 24.555 | 22.539 (91,79%) | 1.927 | 89 | 2.993 pares |
+
+Causa da ruptura (seção 5.12), com a etapa 10 do teste conferindo cada par contra o arquivo:
+
+| Semana | Rupturas | Sem pedido na semana | Pedido atrasado | Recebido e vendido | Recebido sem entrada | Cancelado |
+|---|---|---|---|---|---|---|
+| 22–25/10 | 318 | 225 (70,8%) | 31 (9,7%) | 9 (2,8%) | 40 (12,6%) | 13 (4,1%) |
+| 15–18/10 | 1.399 | 1.214 (86,8%) | 11 (0,8%) | 10 (0,7%) | 77 (5,5%) | 87 (6,2%) |
+| 08–11/10 | 560 | 521 (93,0%) | 2 (0,4%) | 4 (0,7%) | 21 (3,8%) | 12 (2,1%) |
+| 01–04/10 | 1.169 | 987 (84,4%) | 10 (0,9%) | 7 (0,6%) | 138 (11,8%) | 27 (2,3%) |
+
+A semana 01–04/10 traz na pasta os dois layouts (`Estoque 01Out26.txt` e `Estoque 04Out26.txt`, de posição, e `EstoqueInicio.txt` e `EstoqueFim.txt`, de movimento). A capa e o teste usam os de movimento, por isso a ruptura dessa linha (1.169) não é a da seção 10 (3.132, pela posição).
+
+Em 22 a 25/10 o pendente nas rupturas é 877 unidades e R$ 12.971,24 a custo, e o Rafael Almeida concentra 25 dos 31 pares com pedido atrasado (750 unidades, R$ 10.395,00).
+
+Em 22 a 25/10, a venda da oferta é R$ 2.892.608,18 sobre R$ 10.633.168,46 das 13 lojas (27,2%), e 15.315 linhas do arquivo de ofertas têm promoção que termina depois do domingo, com R$ 500.480,79 de `VLRTOTALVDA`. A diferença abaixo da conta se distribui de 12,5% a 19,6% dos pares em cada uma das 13 lojas, sem concentração em uma loja. O `Entradas.txt` registra a entrada de transferência (operação 50, 575.490 unidades) e de compra (operação 1, 1.434.116 unidades); a saída por transferência, quebra e ajuste não está em arquivo.
+
+### 10.5 Semana 29/10 a 01/11 (12/11/2026)
+
+Primeira semana que cruza o mês. `Entrada Novo Período` tem `Vendas2910.txt` a `Vendas0111.txt`, `Estoque29Out.txt` e `Estoque01Nov.txt` (movimento, com a central), ofertas, automático, entradas, embalagem e `Dimproduto.txt`. A raiz passou a ter a semana 22 a 25/10, `Semanas anteriores\15-18 Out 2026` guarda 15 a 18/10 com `Dimproduto.txt` e `Lojas.xlsx`, e a comparação de venda usa 22 a 25/10.
+
+A ordem dos arquivos de venda é cronológica pela data, e não pelo texto `dd-mm-aaaa`. Pela ordem de texto, 01/11 vinha antes de 29/10 e a capa pedia o estoque de 31/10. Isso vale para o servidor local e para **Escolher pasta**. O estoque `EstoqueDDmmm.txt` é achado pelo dia e pelo mês do primeiro e do último dia de venda.
+
+Números (o `engine.js` no Node e a capa no navegador dão os mesmos): 2.377 produtos de oferta, venda da oferta R$ 4.417.635,15, venda das 13 lojas R$ 11.710.804,43, participação 37,72%. Pares loja + produto da oferta: 30.901, dos quais 21.906 têm as duas linhas de estoque. A conta da janela fecha em 20.078 (91,66%), fica abaixo em 1.777 e acima em 51. Conta aberta 1.828, ruptura 1.042, saldo negativo 411, ruptura provável 342, sem entrada 2. Pedido recebido sem entrada visível: 1.028 pares (117.447 unidades). Causa da ruptura: 931 sem pedido na semana (89,3%), 23 pedido atrasado (912 unidades, R$ 5.256,64 a custo), 8 recebido e vendido, 41 recebido sem entrada, 39 cancelado. As dez etapas do teste conferem.
+
+A participação de 37,72% inclui venda depois do domingo. A última alteração do arquivo de ofertas é de 06/11, e `VLRTOTALVDA` acumula a venda da promoção até a extração. R$ 2.823.523,74 estão em promoções que terminam em 02/11, R$ 860.236,92 em promoções que terminam em 11/11 e R$ 562.701,62 em promoções que terminaram até 01/11. Não há outro arquivo de ofertas desta semana. O `Dimproduto.txt` de 15/10 não tinha 9 produtos da oferta (apareciam sem comprador). Ele foi trocado em 12/11 às 16h20, na raiz e em `Entrada Novo Período`, e agora todos os 2.377 produtos estão no cadastro. A leitura dos arquivos pela capa ignora o cache do navegador, porque os arquivos da semana mudam sem mudar de nome.
 
 ## 11. Ordem de construção
 

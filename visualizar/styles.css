@@ -191,3 +191,30 @@ button.card:hover { border-color: var(--navy); }
   .cards, .campanha-grade { grid-template-columns: 1fr 1fr; }
   .leitura, .duas-tabelas { grid-template-columns: 1fr; }
 }
+
+.card small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+
+.campanha-larga { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); column-gap: 14px; }
+.campanha-larga > .campanha-titulo { grid-column: 1 / -1; }
+.campanha-larga .stat { border-top: 1px solid var(--line); }
+@media (max-width: 1100px) { .campanha-larga { grid-template-columns: 1fr 1fr; } }
+
+/* Sobra por comprador (PRD 5.13) */
+.sobra-grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.sobra-card { padding: 18px 20px; }
+.sobra-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.sobra-card h3 { margin: 0; font-size: 18px; }
+.sobra-pct { font-size: 30px; letter-spacing: -0.03em; color: var(--vermelho); }
+.sobra-pct small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); text-align: right; letter-spacing: 0; }
+.sobra-conta { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; margin: 0 0 10px; font-size: 20px; font-weight: 700; }
+.sobra-conta em { display: block; font-style: normal; font-size: 12px; font-weight: 400; color: var(--muted); }
+.sobra-conta i { font-style: normal; color: var(--muted); padding-bottom: 2px; }
+.sobra-conta .destaque { color: var(--vermelho); }
+.sobra-origem { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.sobra-origem b { color: var(--ink); }
+.sobra-card details { margin-top: 6px; }
+.sobra-card summary { cursor: pointer; font-weight: 600; color: var(--verde); padding: 6px 0; }
+.sobra-card .table-wrap { max-height: 360px; margin-top: 6px; }
+.sobra-card td:nth-child(n+3) { text-align: right; white-space: nowrap; }
+@media (max-width: 1100px) { .sobra-grade { grid-template-columns: 1fr; } }
+.sobra-conta .ajuste { color: var(--muted); }
