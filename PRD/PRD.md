@@ -291,6 +291,16 @@ Leitura simples para a diretoria: um card por comprador (aba "Sobra por comprado
 - **Entrada no estoque** é a do `Entradas.txt` nos dias da conta da janela (a mesma da seção 5.3). A quantidade recebida do pedido (automático e manual, seção 5.9) aparece ao lado e fica fora da base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo.
 - **Sobrou** é o estoque final real do último dia. Saldo negativo conta como zero.
 - **Ajuste** = sobrou − (disponível − vendeu). Negativo: saiu mais do que a venda explica (quebra, transferência, consumo). Positivo: entrou mais do que o arquivo de entradas registra. Faz o card fechar sem esconder a diferença da conta.
+- **Situação do produto** (soma das 13 lojas; cada produto cai em um grupo só). Cobertura = sobrou × 4 ÷ vendeu, em dias de venda da semana.
+  - Faltando / risco de ruptura: sem saldo, ou cobertura abaixo de 1 dia (a mesma régua da ruptura provável, seção 5.5).
+  - Com sobra: sem venda com saldo, ou cobertura de 7 dias ou mais.
+  - No padrão: entre os dois.
+  - O limite de 1 dia vem da seção 5.5. O de 7 dias é uma referência que não vem dos arquivos. Os dois podem ser alterados na tela (campos no topo da aba) e o resumo executivo usa 1 e 7.
+  - O card mostra quantos produtos há em cada grupo e o percentual, e os três botões escolhem qual lista abrir.
+  - A situação olha o produto na soma das lojas. A coluna "Lojas zeradas" mostra em quantas lojas o saldo ficou zero, pois um produto "no padrão" na soma pode estar zerado em algumas lojas.
+- **Comparação entre compradores**: tabela no topo da aba, com produtos por grupo, barra de distribuição, % sobra, estoque inicial, entrou, vendeu, sobrou e pares de loja zerados. Os cabeçalhos ordenam. Tabela e cada card têm "Tela cheia".
+- Colunas da lista de produtos: estoque inicial, entrou, pedido automático / manual, vendeu, sobrou, % sobra, cobertura e lojas zeradas.
+- **A loja 70 (central, CD) fica fora da sobra por comprador.** O foco é saber o que foi abastecido em excesso nas lojas, e o saldo do CD alteraria a análise. Só as 13 lojas de varejo (1, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17) entram: estoque inicial, entrada, venda, sobra, grupos e pares. A central aparece apenas na seção 5.6 (falha de transferência ou de compra). Verificado em 12/11/2026: a lista de pares da análise tem só as 13 lojas (30.901 = 2.377 produtos × 13), e a etapa 11 da validação falha se a 70 aparecer.
 - Contam só os pares loja + produto com as duas linhas de estoque. Os demais ficam fora e o número aparece no texto.
 - O percentual compara compradores. A soma de unidades mistura produtos diferentes, por isso cada card traz a lista dos produtos com mais sobra (ordem da sobra em unidades, 30 na tela, 10 no resumo), somados nas 13 lojas. A exportação em CSV traz todos.
 - Os compradores ficam em ordem do % sobra. Não há corte para "sobra demais".

@@ -1,4 +1,4 @@
-import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=43";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=44";
 
 // Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
 const buscar = (url) => fetch(url, { cache: "no-store" });
@@ -987,6 +987,7 @@ function detailColumns() {
 }
 
 function render() {
+  view.onclick = null;
   state.keepFull = Boolean(document.fullscreenElement) || Boolean(document.querySelector("#panel.expanded"));
   title.textContent = state.view === "detalhe" ? state.detalheTitulo : VIEWS.find(([id]) => id === state.view)[1];
   [...nav.children].forEach((button) => button.classList.toggle("active", button.dataset.view === state.view));
@@ -1610,26 +1611,154 @@ function renderBuyers(result) {
   bindFilters(result.compradores);
 }
 
-const LIMITE_SOBRA = 30;
+const sobraCfg = { risco: 1, dias: 7, ordem: "pct", sentido: "desc" };
+const GRUPOS_SOBRA = [
+  { id: "sobra", nome: "Com sobra", dica: "Sem venda com saldo, ou saldo que cobre os dias de venda do limite de sobra ou mais." },
+  { id: "padrao", nome: "No padrão", dica: "Saldo entre o limite de risco e o limite de sobra." },
+  { id: "risco", nome: "Faltando / risco de ruptura", dica: "Sem saldo, ou saldo que cobre menos dias de venda que o limite de risco." },
+];
+
 function renderSobra(result) {
   const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const lista = sobraPorComprador(result.details);
-  const total = lista.reduce((s, c) => ({ inicial: s.inicial + c.inicial, entrada: s.entrada + c.entrada, venda: s.venda + c.venda, sobra: s.sobra + c.sobra, pares: s.pares + c.pares, fora: s.fora + c.foraDaBase }), { inicial: 0, entrada: 0, venda: 0, sobra: 0, pares: 0, fora: 0 });
-  const base = total.inicial + total.entrada;
-  const linha = (p) => `<tr><td class="txt">${esc(p.produto)}</td><td class="txt">${esc(p.descricao)}</td><td>${qty(p.inicial)}</td><td>${qty(p.entrada)}</td><td>${qty(p.auto)}</td><td>${qty(p.manual)}</td><td>${qty(p.venda)}</td><td>${qty(p.sobra)}</td><td>${p.pct == null ? "—" : pct(p.pct)}</td><td>${p.abertos ? `${p.abertos} de ${p.lojas}` : "—"}</td></tr>`;
-  const card = (c) => `
-    <article class="card sobra-card">
-      <header><h3>${esc(c.comprador)}</h3><b class="sobra-pct">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b></header>
-      <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em>Entrada</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em>Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Sobrou</em>${qty(c.sobra)}</span></p>
-      <p class="sobra-origem">Pedido recebido: <b>${qty(c.auto)}</b> automático · <b>${qty(c.manual)}</b> manual · ${c.produtos.length.toLocaleString("pt-BR")} produtos · ${c.pares.toLocaleString("pt-BR")} pares de loja${c.abertos ? ` · ${c.abertos.toLocaleString("pt-BR")} com conta aberta` : ""}${c.recSemEntrada ? ` · ${c.recSemEntrada.toLocaleString("pt-BR")} recebidos sem entrada no estoque` : ""}</p>
-      <details><summary>Produtos com mais sobra (${Math.min(LIMITE_SOBRA, c.produtos.length)} de ${c.produtos.length.toLocaleString("pt-BR")})</summary>
-        <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Descrição</th><th>Estoque inicial</th><th>Entrada</th><th>Pedido automático</th><th>Pedido manual</th><th>Vendeu</th><th>Sobrou</th><th>% sobra</th><th>Conta aberta (lojas)</th></tr></thead>
-        <tbody>${c.produtos.slice(0, LIMITE_SOBRA).map(linha).join("")}</tbody></table></div>
+  const lista = sobraPorComprador(result.details, { risco: sobraCfg.risco, sobraDias: sobraCfg.dias });
+  const soma = (campo) => lista.reduce((s, c) => s + (c[campo] || 0), 0);
+  const rede = { comprador: "Rede", inicial: soma("inicial"), entrada: soma("entrada"), venda: soma("venda"), sobra: soma("sobra"), pares: soma("pares"), zeradas: soma("zeradas"), fora: soma("foraDaBase"), nSobra: soma("nSobra"), nPadrao: soma("nPadrao"), nRisco: soma("nRisco") };
+  rede.disponivel = rede.inicial + rede.entrada;
+  rede.pct = rede.disponivel > 0.05 ? rede.sobra / rede.disponivel : null;
+  const nProd = (c) => c.nSobra + c.nPadrao + c.nRisco;
+  const pc = (n, base) => (base ? pct(n / base) : "—");
+  const barra = (c) => {
+    const total = nProd(c) || 1;
+    return `<span class="sobra-barra" title="Com sobra ${c.nSobra} · No padrão ${c.nPadrao} · Faltando ${c.nRisco}"><i class="b-sobra" style="width:${(100 * c.nSobra) / total}%"></i><i class="b-padrao" style="width:${(100 * c.nPadrao) / total}%"></i><i class="b-risco" style="width:${(100 * c.nRisco) / total}%"></i></span>`;
+  };
+  const botao = (alvo) => `<button type="button" class="sobra-full" data-full="${alvo}">Tela cheia</button>`;
+
+  /* Comparação entre compradores */
+  const COLS = [
+    { k: "comprador", t: "Comprador", txt: true, v: (c) => c.comprador },
+    { k: "produtos", t: "Produtos", v: (c) => nProd(c), c: (c) => itens(nProd(c)) },
+    { k: "nSobra", t: "Com sobra", v: (c) => c.nSobra, c: (c) => `${itens(c.nSobra)} <small>${pc(c.nSobra, nProd(c))}</small>` },
+    { k: "nPadrao", t: "No padrão", v: (c) => c.nPadrao, c: (c) => `${itens(c.nPadrao)} <small>${pc(c.nPadrao, nProd(c))}</small>` },
+    { k: "nRisco", t: "Faltando / risco", v: (c) => c.nRisco, c: (c) => `${itens(c.nRisco)} <small>${pc(c.nRisco, nProd(c))}</small>` },
+    { k: "grafico", t: "Distribuição", v: (c) => c.nRisco / (nProd(c) || 1), c: (c) => barra(c) },
+    { k: "pct", t: "% sobra", v: (c) => c.pct ?? -1, c: (c) => `<b>${c.pct == null ? "—" : pct(c.pct)}</b>` },
+    { k: "inicial", t: "Estoque inicial", v: (c) => c.inicial, c: (c) => qty(c.inicial) },
+    { k: "entrada", t: "Entrou", v: (c) => c.entrada, c: (c) => qty(c.entrada) },
+    { k: "venda", t: "Vendeu", v: (c) => c.venda, c: (c) => qty(c.venda) },
+    { k: "sobra", t: "Sobrou", v: (c) => c.sobra, c: (c) => qty(c.sobra) },
+    { k: "zeradas", t: "Pares de loja zerados", v: (c) => c.zeradas, c: (c) => itens(c.zeradas) },
+  ];
+  const ordenar = (rows) => {
+    const col = COLS.find((x) => x.k === sobraCfg.ordem) || COLS[6];
+    const dir = sobraCfg.sentido === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const va = col.v(a), vb = col.v(b);
+      const r = col.txt ? String(va).localeCompare(String(vb), "pt-BR") : va - vb;
+      return r * dir || a.comprador.localeCompare(b.comprador, "pt-BR");
+    });
+  };
+  const linhaComp = (c) => `<tr>${COLS.map((x) => `<td class="${x.txt ? "txt" : "num"}">${x.txt ? esc(c.comprador) : x.c(c)}</td>`).join("")}</tr>`;
+  const cabecaComp = () => COLS.map((x) => `<th class="${x.txt ? "txt" : "num"}"><button type="button" class="sobra-ordem${sobraCfg.ordem === x.k ? " ativa" : ""}" data-ordem="${x.k}">${x.t}${sobraCfg.ordem === x.k ? (sobraCfg.sentido === "asc" ? " ▲" : " ▼") : ""}</button></th>`).join("");
+  const comparacao = `
+    <section class="sobra-comp" id="sobra-comp">
+      <div class="sobra-comp-topo"><h2>Comparação entre compradores</h2>${botao("sobra-comp")}</div>
+      <div class="table-wrap"><table class="sobra-tabela"><thead><tr>${cabecaComp()}</tr></thead>
+        <tbody>${ordenar(lista).map(linhaComp).join("")}</tbody>
+        <tfoot>${linhaComp(rede)}</tfoot></table></div>
+    </section>`;
+
+  /* Card por comprador */
+  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}</td><td class="num">${qty(p.inicial)}</td><td class="num">${qty(p.entrada)}</td><td class="num">${qty(p.auto)} / ${qty(p.manual)}</td><td class="num">${qty(p.venda)}</td><td class="num"><b>${qty(p.sobra)}</b></td><td class="num">${p.pct == null ? "—" : pct(p.pct)}</td><td class="num">${p.cobertura == null ? (p.sobra > 0.05 ? "sem venda" : "—") : qty(Math.round(p.cobertura * 10) / 10)}</td><td class="num">${p.zeradas ? `${p.zeradas} de ${p.lojas}` : "—"}</td></tr>`;
+  const ordemGrupo = {
+    sobra: (l) => l,
+    padrao: (l) => l,
+    risco: (l) => [...l].sort((a, b) => (a.sobra > 0.05) - (b.sobra > 0.05) || b.venda - a.venda || (a.cobertura ?? 0) - (b.cobertura ?? 0)),
+  };
+  const tabelaGrupo = (c, g) => {
+    const itensG = ordemGrupo[g.id](c.produtos.filter((p) => p.classe === g.id));
+    return `<tbody class="grupo-${g.id}">${itensG.map(linhaProd).join("") || `<tr><td colspan="9" class="txt">Nenhum produto neste grupo.</td></tr>`}</tbody>`;
+  };
+  const card = (c) => {
+    const n = nProd(c);
+    return `
+    <article class="card sobra-card g-sobra" data-comp="${esc(c.comprador)}">
+      <header>
+        <div><h3>${esc(c.comprador)}</h3><small>${itens(n)} produtos · ${itens(c.pares)} pares de loja · ${itens(c.zeradas)} zerados</small></div>
+        <b class="sobra-pct">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b>
+        ${botao("card")}
+      </header>
+      <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em>Entrou</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em>Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Sobrou</em>${qty(c.sobra)}</span></p>
+      <p class="sobra-origem">Pedido recebido: <b>${qty(c.auto)}</b> automático · <b>${qty(c.manual)}</b> manual${c.recSemEntrada ? ` · ${itens(c.recSemEntrada)} pares recebidos sem entrada no estoque` : ""}</p>
+      <div class="sobra-situacao">
+        <p class="sobra-quanto">Dos <b>${itens(n)}</b> produtos:</p>
+        ${barra(c)}
+        <div class="sobra-grupos" role="group" aria-label="Produtos por situação">
+          ${GRUPOS_SOBRA.map((g, i) => { const q = [c.nSobra, c.nPadrao, c.nRisco][i]; return `<button type="button" class="grupo-btn grupo-btn-${g.id}" data-grupo="${g.id}" title="${esc(g.dica)}"><span>${g.nome}</span><b>${itens(q)}</b><small>${pc(q, n)}</small></button>`; }).join("")}
+        </div>
+      </div>
+      <details class="sobra-lista">
+        <summary>Ver os produtos do grupo escolhido</summary>
+        <div class="table-wrap"><table class="sobra-tabela sobra-prod">
+          <thead><tr><th class="txt">Produto</th><th class="num" title="Estoque do primeiro dia">Estoque inicial</th><th class="num" title="Entrada no estoque (Entradas.txt)">Entrou</th><th class="num" title="Pedido recebido: automático / manual">Pedido aut. / man.</th><th class="num">Vendeu</th><th class="num" title="Estoque final do último dia">Sobrou</th><th class="num" title="Sobrou ÷ (estoque inicial + entrou)">% sobra</th><th class="num" title="Dias de venda que o saldo cobre, no ritmo da semana">Cobertura (dias)</th><th class="num" title="Lojas com saldo zero">Lojas zeradas</th></tr></thead>
+          ${GRUPOS_SOBRA.map((g) => tabelaGrupo(c, g)).join("")}
+        </table></div>
       </details>
     </article>`;
+  };
+
   view.innerHTML = `
-    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível. Disponível = estoque inicial + entrada no estoque (Entradas.txt). Sobrou = estoque final real do último dia. Ajuste = o que a conta não explica (sobrou − (disponível − vendeu)): negativo é saída que nenhum arquivo traz, como quebra ou transferência; positivo é entrada não registrada. % sobra = sobrou ÷ disponível. Automático e manual são a quantidade recebida do pedido, ao lado: não entram na base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo. Soma de unidades de produtos diferentes: use o percentual para comparar e a lista para agir. Rede: ${pct(base > 0.05 ? total.sobra / base : 0)} de sobra em ${total.pares.toLocaleString("pt-BR")} pares; ${total.fora.toLocaleString("pt-BR")} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>
-    <div class="sobra-grade">${lista.map(card).join("")}</div>`;
+    <div class="sobra-param">
+      <label>Faltando: saldo cobre menos de <input type="number" id="sobra-risco" min="0" step="0.5" value="${sobraCfg.risco}"> dia(s) de venda</label>
+      <label>Sobra: saldo cobre <input type="number" id="sobra-dias" min="1" step="1" value="${sobraCfg.dias}"> dias de venda ou mais</label>
+      <span>Os dois limites são referência e podem ser alterados. Não vêm dos arquivos.</span>
+    </div>
+    ${comparacao}
+    <div class="sobra-grade">${lista.map(card).join("")}</div>
+    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível, só nas 13 lojas: a central (70, CD) fica de fora. Disponível = estoque inicial + entrada no estoque (Entradas.txt). Sobrou = estoque final real do último dia. % sobra = sobrou ÷ disponível. Ajuste = o que a conta não explica (sobrou − (disponível − vendeu)): negativo é saída que nenhum arquivo traz, como quebra ou transferência; positivo é entrada não registrada. Pedido recebido, automático e manual, fica ao lado e fora da base do percentual, porque o pedido recebido pode não ter entrado no estoque até domingo. Cada produto (soma das 13 lojas) cai em um grupo só, pela cobertura = sobrou × 4 ÷ vendeu: Faltando (sem saldo ou cobertura abaixo do limite de risco), Com sobra (sem venda com saldo ou cobertura no limite de sobra ou acima) e No padrão (entre os dois). Soma de unidades de produtos diferentes: compare pelo percentual e pelas contagens, e aja pela lista de produtos. Rede: ${rede.pct == null ? "—" : pct(rede.pct)} de sobra em ${itens(rede.pares)} pares; ${itens(rede.fora)} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>`;
+
+  /* interações */
+  const sair = () => {
+    document.querySelectorAll(".expandido").forEach((el) => el.classList.remove("expandido"));
+    document.querySelectorAll(".sobra-full").forEach((b) => { b.textContent = "Tela cheia"; });
+  };
+  document.onfullscreenchange = () => { if (!document.fullscreenElement) sair(); };
+  view.onclick = (event) => {
+    const full = event.target.closest(".sobra-full");
+    if (full) {
+      const alvo = full.dataset.full === "card" ? full.closest(".sobra-card") : document.getElementById(full.dataset.full);
+      if (alvo.classList.contains("expandido")) {
+        sair();
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        return;
+      }
+      sair();
+      alvo.classList.add("expandido");
+      full.textContent = "Sair da tela cheia";
+      const det = alvo.querySelector("details");
+      if (det) det.open = true;
+      const pedido = alvo.requestFullscreen?.();
+      if (pedido && typeof pedido.catch === "function") pedido.catch(() => {});
+      return;
+    }
+    const ordem = event.target.closest(".sobra-ordem");
+    if (ordem) {
+      const k = ordem.dataset.ordem;
+      sobraCfg.sentido = sobraCfg.ordem === k ? (sobraCfg.sentido === "asc" ? "desc" : "asc") : (k === "comprador" ? "asc" : "desc");
+      sobraCfg.ordem = k;
+      const aberto = document.fullscreenElement;
+      render();
+      if (aberto) document.getElementById("sobra-comp")?.requestFullscreen?.().then(() => document.getElementById("sobra-comp")?.classList.add("expandido")).catch(() => {});
+      return;
+    }
+    const grupo = event.target.closest(".grupo-btn");
+    if (grupo) {
+      const cardEl = grupo.closest(".sobra-card");
+      cardEl.className = cardEl.className.replace(/\bg-\w+/g, "") + ` g-${grupo.dataset.grupo}`;
+      cardEl.querySelector("details").open = true;
+    }
+  };
+  document.querySelector("#sobra-risco").onchange = (e) => { sobraCfg.risco = Math.max(0, Number(e.target.value) || 0); render(); };
+  document.querySelector("#sobra-dias").onchange = (e) => { sobraCfg.dias = Math.max(1, Number(e.target.value) || 1); render(); };
 }
 
 function renderDatas(result) {

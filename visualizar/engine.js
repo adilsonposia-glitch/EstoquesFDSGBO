@@ -862,9 +862,22 @@ function analyze(input) {
 // Abastecimento e sobra por comprador (PRD 5.13). Entra só o par loja + produto com as duas linhas de estoque.
 // Disponível = estoque inicial + entrada no estoque (Entradas.txt na janela). Sobra = estoque final real do último dia.
 // Automático e manual são a QTDRECEBIDA do pedido: informação ao lado, fora da base do percentual.
-function sobraPorComprador(details) {
+// Situação do produto (soma das 13 lojas), pela cobertura = sobrou × dias ÷ vendeu (dias de venda que o saldo cobre, no ritmo da semana):
+//   faltando: sem saldo ou cobertura abaixo de `risco` dias (mesma régua da ruptura provável, 1 dia);
+//   sobra: sem venda com saldo, ou cobertura de `sobraDias` dias ou mais;
+//   padrão: entre os dois. Os dois limites não vêm dos arquivos: o usuário pode alterar (PRD 5.13).
+const CLASSES_SOBRA = ["sobra", "padrao", "risco"];
+function classeSobra(p, risco, sobraDias, dias) {
+  if (p.sobra <= EPS) return "risco";
+  if (p.venda <= EPS) return "sobra";
+  const cob = (p.sobra * dias) / p.venda;
+  if (cob < risco) return "risco";
+  return cob >= sobraDias ? "sobra" : "padrao";
+}
+function sobraPorComprador(details, opcoes = {}) {
+  const risco = opcoes.risco ?? 1, sobraDias = opcoes.sobraDias ?? 7, dias = opcoes.dias ?? 4;
   const compradores = new Map();
-  const novo = (c) => ({ comprador: c, inicial: 0, entrada: 0, auto: 0, manual: 0, disponivel: 0, venda: 0, sobra: 0, pares: 0, foraDaBase: 0, abertos: 0, recSemEntrada: 0, negativos: 0, mapa: new Map() });
+  const novo = (c) => ({ comprador: c, inicial: 0, entrada: 0, auto: 0, manual: 0, disponivel: 0, venda: 0, sobra: 0, pares: 0, zeradas: 0, foraDaBase: 0, abertos: 0, recSemEntrada: 0, negativos: 0, mapa: new Map() });
   for (const row of details) {
     const nome = row.comprador || "Sem comprador";
     let c = compradores.get(nome);
@@ -876,7 +889,7 @@ function sobraPorComprador(details) {
     const aberto = Boolean(row.irregular);
     let p = c.mapa.get(row.produto);
     if (!p) {
-      p = { produto: row.produto, descricao: row.descricao, inicial: 0, entrada: 0, auto: 0, manual: 0, venda: 0, sobra: 0, lojas: 0, abertos: 0, recSemEntrada: 0 };
+      p = { produto: row.produto, descricao: row.descricao, inicial: 0, entrada: 0, auto: 0, manual: 0, venda: 0, sobra: 0, lojas: 0, zeradas: 0, abertos: 0, recSemEntrada: 0 };
       c.mapa.set(row.produto, p);
     }
     for (const alvo of [c, p]) {
@@ -889,6 +902,7 @@ function sobraPorComprador(details) {
     }
     p.lojas += 1;
     c.pares += 1;
+    if (Math.abs(row.final) <= EPS) { p.zeradas += 1; c.zeradas += 1; }
     if (aberto) { p.abertos += 1; c.abertos += 1; }
     if (row.recebidoSemEntrada) { p.recSemEntrada += 1; c.recSemEntrada += 1; }
     if (negativo) c.negativos += 1;
@@ -897,8 +911,11 @@ function sobraPorComprador(details) {
   const comPct = (o) => ({ ...o, disponivel: o.inicial + o.entrada, ajuste: o.sobra - (o.inicial + o.entrada - o.venda), pct: o.inicial + o.entrada > EPS ? o.sobra / (o.inicial + o.entrada) : null });
   return [...compradores.values()].map((c) => {
     const { mapa, ...resto } = c;
-    const produtos = [...mapa.values()].map(comPct).sort((a, b) => b.sobra - a.sobra || String(a.descricao).localeCompare(String(b.descricao), "pt-BR"));
-    return { ...comPct(resto), produtos };
+    const produtos = [...mapa.values()].map(comPct).map((p) => ({ ...p, cobertura: p.venda > EPS ? (p.sobra * dias) / p.venda : null, classe: classeSobra(p, risco, sobraDias, dias) }))
+      .sort((a, b) => b.sobra - a.sobra || String(a.descricao).localeCompare(String(b.descricao), "pt-BR"));
+    const contagem = { sobra: 0, padrao: 0, risco: 0 };
+    for (const p of produtos) contagem[p.classe] += 1;
+    return { ...comPct(resto), produtos, nSobra: contagem.sobra, nPadrao: contagem.padrao, nRisco: contagem.risco };
   }).filter((c) => c.pares > 0).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1) || a.comprador.localeCompare(b.comprador, "pt-BR"));
 }
 

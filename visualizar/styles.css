@@ -200,21 +200,61 @@ button.card:hover { border-color: var(--navy); }
 @media (max-width: 1100px) { .campanha-larga { grid-template-columns: 1fr 1fr; } }
 
 /* Sobra por comprador (PRD 5.13) */
-.sobra-grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
-.sobra-card { padding: 18px 20px; }
-.sobra-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.sobra-param { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
+.sobra-param label { color: var(--ink); }
+.sobra-param input { width: 64px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.sobra-comp { margin-bottom: 18px; }
+.sobra-comp-topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.sobra-comp-topo h2 { margin: 0; font-size: 18px; }
+.sobra-full { border-radius: 10px; padding: 6px 12px; cursor: pointer; }
+.sobra-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.sobra-tabela th, .sobra-tabela td { padding: 7px 8px; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.sobra-tabela th { position: sticky; top: 0; background: var(--verde); color: #fff; font-weight: 600; z-index: 1; }
+.sobra-tabela .num { text-align: right; }
+.sobra-tabela .txt { text-align: left; }
+.sobra-tabela tfoot td { font-weight: 700; background: #eef3ee; }
+.sobra-tabela td small { color: var(--muted); font-size: 11px; margin-left: 2px; }
+.sobra-ordem { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; padding: 0; text-align: inherit; }
+.sobra-ordem.ativa { text-decoration: underline; }
+.sobra-barra { display: inline-flex; width: 120px; height: 10px; border-radius: 6px; overflow: hidden; background: var(--line); vertical-align: middle; }
+.sobra-barra i { display: block; height: 100%; }
+.b-sobra { background: #E8A317; } .b-padrao { background: var(--verde); } .b-risco { background: var(--vermelho); }
+.sobra-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(560px, 1fr)); gap: 16px; align-items: start; margin-bottom: 16px; }
+.sobra-card { padding: 18px 20px; min-width: 0; }
+.sobra-card header { display: grid; grid-template-columns: 1fr auto auto; align-items: start; gap: 12px; margin-bottom: 12px; }
 .sobra-card h3 { margin: 0; font-size: 18px; }
-.sobra-pct { font-size: 30px; letter-spacing: -0.03em; color: var(--vermelho); }
+.sobra-card header small { color: var(--muted); font-size: 12px; }
+.sobra-pct { font-size: 30px; letter-spacing: -0.03em; color: var(--navy); line-height: 1; }
 .sobra-pct small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); text-align: right; letter-spacing: 0; }
-.sobra-conta { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; margin: 0 0 10px; font-size: 20px; font-weight: 700; }
+.sobra-conta { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; margin: 0 0 10px; font-size: 18px; font-weight: 700; }
 .sobra-conta em { display: block; font-style: normal; font-size: 12px; font-weight: 400; color: var(--muted); }
 .sobra-conta i { font-style: normal; color: var(--muted); padding-bottom: 2px; }
-.sobra-conta .destaque { color: var(--vermelho); }
-.sobra-origem { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
-.sobra-origem b { color: var(--ink); }
-.sobra-card details { margin-top: 6px; }
-.sobra-card summary { cursor: pointer; font-weight: 600; color: var(--verde); padding: 6px 0; }
-.sobra-card .table-wrap { max-height: 360px; margin-top: 6px; }
-.sobra-card td:nth-child(n+3) { text-align: right; white-space: nowrap; }
-@media (max-width: 1100px) { .sobra-grade { grid-template-columns: 1fr; } }
+.sobra-conta .destaque { color: var(--navy); }
 .sobra-conta .ajuste { color: var(--muted); }
+.sobra-origem { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.sobra-origem b { color: var(--ink); }
+.sobra-situacao { margin: 4px 0 8px; }
+.sobra-quanto { margin: 0 0 6px; font-size: 14px; }
+.sobra-situacao .sobra-barra { display: flex; width: 100%; height: 12px; margin-bottom: 10px; }
+.sobra-grupos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.grupo-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-top: 4px solid var(--line); border-radius: 10px; background: #fff; cursor: pointer; text-align: left; font: inherit; }
+.grupo-btn span { font-size: 12px; color: var(--muted); }
+.grupo-btn b { font-size: 22px; letter-spacing: -0.02em; }
+.grupo-btn small { font-size: 12px; color: var(--muted); }
+.grupo-btn-sobra { border-top-color: #E8A317; } .grupo-btn-padrao { border-top-color: var(--verde); } .grupo-btn-risco { border-top-color: var(--vermelho); }
+.g-sobra .grupo-btn-sobra, .g-padrao .grupo-btn-padrao, .g-risco .grupo-btn-risco { background: #eef3ee; box-shadow: inset 0 0 0 2px var(--navy); }
+.sobra-lista { margin-top: 8px; }
+.sobra-lista summary { cursor: pointer; font-weight: 600; color: var(--verde); padding: 6px 0; }
+.sobra-card .table-wrap { max-height: 380px; margin-top: 6px; }
+.sobra-prod tbody { display: none; }
+.g-sobra .sobra-prod .grupo-sobra, .g-padrao .sobra-prod .grupo-padrao, .g-risco .sobra-prod .grupo-risco { display: table-row-group; }
+.sobra-prod td.prod { width: 34%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sobra-prod td.prod b { margin-right: 4px; }
+.c-risco td:first-child { box-shadow: inset 4px 0 0 var(--vermelho); }
+.c-padrao td:first-child { box-shadow: inset 4px 0 0 var(--verde); }
+.c-sobra td:first-child { box-shadow: inset 4px 0 0 #E8A317; }
+.sobra-card.expandido, .sobra-comp.expandido { position: fixed; inset: 0; z-index: 60; overflow: auto; background: var(--bg); padding: 20px 24px; border-radius: 0; margin: 0; }
+.sobra-card.expandido .table-wrap, .sobra-comp.expandido .table-wrap { max-height: none; }
+.sobra-card.expandido .sobra-prod td, .sobra-comp.expandido td { padding: 9px 10px; }
+.sobra-card.expandido .sobra-prod td.prod { width: 40%; }
+@media (max-width: 700px) { .sobra-grade { grid-template-columns: 1fr; } }

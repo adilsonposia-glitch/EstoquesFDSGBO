@@ -400,6 +400,7 @@ if (movimentoMode) {
     entradaDia.set(k, (entradaDia.get(k) || 0) + num(p[7]));
   });
   const esperado = new Map();
+  const prodEsperado = new Map();
   let pares = 0, fora = 0;
   for (const d of r.details) {
     const chave = `${d.loja}|${d.produto}`;
@@ -411,9 +412,24 @@ if (movimentoMode) {
     const c = esperado.get(nome) || { inicial: 0, entrada: 0, venda: 0, sobra: 0, pares: 0 };
     c.inicial += a.est; c.entrada += ent; c.venda += vendaPar.get(chave) || 0; c.sobra += b.est < -EPS ? 0 : b.est; c.pares += 1;
     esperado.set(nome, c);
+    const pk = `${nome}|${d.produto}`;
+    const pp = prodEsperado.get(pk) || { nome, venda: 0, sobra: 0 };
+    pp.venda += vendaPar.get(chave) || 0; pp.sobra += b.est < -EPS ? 0 : b.est;
+    prodEsperado.set(pk, pp);
     pares += 1;
   }
+  // Situação do produto recalculada à parte: faltando (sem saldo ou cobertura < 1 dia), sobra (sem venda com saldo ou cobertura >= 7 dias), padrão (entre os dois).
+  const contEsperada = new Map();
+  for (const pp of prodEsperado.values()) {
+    const cob = pp.venda > EPS ? (pp.sobra * 4) / pp.venda : null;
+    const classe = pp.sobra <= EPS ? "risco" : cob == null ? "sobra" : cob < 1 ? "risco" : cob >= 7 ? "sobra" : "padrao";
+    const x = contEsperada.get(pp.nome) || { sobra: 0, padrao: 0, risco: 0 };
+    x[classe] += 1;
+    contEsperada.set(pp.nome, x);
+  }
   const lista = sobraPorComprador(r.details);
+  const lojasNaSobra = new Set(r.details.map((d) => d.loja));
+  !lojasNaSobra.has("70") && [...lojasNaSobra].every((l) => RETAIL.includes(l)) ? pass("A sobra por comprador só tem as 13 lojas: a central (70) fica de fora", `${lojasNaSobra.size} lojas`) : falha("Loja fora das 13 lojas na sobra (central 70?)", [...lojasNaSobra].filter((l) => !RETAIL.includes(l)).join(", "));
   const naoVazio = lista.filter((c) => esperado.has(c.comprador));
   let errados = 0;
   for (const c of naoVazio) {
@@ -427,6 +443,13 @@ if (movimentoMode) {
   produtosFecham ? pass("A soma da lista de produtos fecha com o total do card, em cada comprador") : falha("Lista de produtos × total do comprador");
   const ajusteOk = lista.every((c) => Math.abs(c.disponivel - c.venda + c.ajuste - c.sobra) < 0.01);
   ajusteOk ? pass("Disponível − vendeu + ajuste = sobrou, em cada comprador") : falha("Identidade do ajuste");
+  let errClasse = 0;
+  for (const c of naoVazio) {
+    const e = contEsperada.get(c.comprador) || { sobra: 0, padrao: 0, risco: 0 };
+    if (c.nSobra !== e.sobra || c.nPadrao !== e.padrao || c.nRisco !== e.risco) errClasse += 1;
+  }
+  errClasse === 0 ? pass("Produtos com sobra / no padrão / faltando de cada comprador iguais aos recalculados", `${n0(naoVazio.length)} compradores`) : falha("Grupos de produtos por comprador", `${errClasse} compradores diferentes`);
+  lista.every((c) => c.nSobra + c.nPadrao + c.nRisco === c.produtos.length && c.produtos.every((p) => ["sobra", "padrao", "risco"].includes(p.classe))) ? pass("Cada produto cai em um grupo só: a soma dos grupos é igual aos produtos do comprador") : falha("Soma dos grupos × produtos");
   const t = lista.reduce((s, c) => ({ d: s.d + c.disponivel, s: s.s + c.sobra, a: s.a + c.ajuste }), { d: 0, s: 0, a: 0 });
   info("Rede", `disponível ${f2(t.d)} · sobrou ${f2(t.s)} (${(100 * t.s / t.d).toFixed(2).replace(".", ",")}%) · ajuste ${f2(t.a)}`);
 }
