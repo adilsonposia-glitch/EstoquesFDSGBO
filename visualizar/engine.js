@@ -502,6 +502,12 @@ function analyze(input) {
       const entradaOutras = somarDia(movCategoria.outras, key, diasConta);
       // Entradas dos dias até a data do estoque inicial: já estão dentro do estoque inicial (a linha do arquivo inicial fecha o dia).
       const entradaPrimeiroDia = dataInicial ? somarDia(movEntrada, key, diasPeriodo.filter((dia) => dia <= dataInicial)) : 0;
+      // Abertura do período (sobra por comprador): o arquivo inicial fecha o dia da última movimentação. Quando essa data é o 1º dia, o estoque
+      // de abertura é a partida da linha (antes das movimentações do 1º dia), e as entradas e a venda do 1º dia entram na conta do período.
+      // Quando a última movimentação é anterior ao 1º dia, o saldo do arquivo já é o de abertura.
+      const usaPartida = movimento && fechaInicial && dataInicial === primeiraData;
+      const aberturaPeriodo = qi == null ? null : usaPartida ? partidaInicial : qi;
+      const entradaPeriodo = entradaMov + (usaPartida ? entradaPrimeiroDia : 0);
       const saidaMov = somarDia(movSaida, key, diasConta);
       const vendaMov = somarDia(salesDay, key, diasConta);
       const conta = hasBoth && dataInicial && dataFinal && dataInicial <= dataFinal ? qi + entradaMov - saidaMov - vendaMov : null;
@@ -647,6 +653,8 @@ function analyze(input) {
         entradaCompra,
         entradaOutras,
         entradaPrimeiroDia,
+        aberturaPeriodo,
+        entradaPeriodo,
         saidaMov,
         vendaMov,
         conta,
@@ -883,7 +891,8 @@ function analyze(input) {
 }
 
 // Abastecimento e sobra por comprador (PRD 5.13). Entra só o par loja + produto com as duas linhas de estoque, e só as 13 lojas.
-// Disponível = estoque inicial + entrada depois do 1º dia (Entradas.txt). Estoque final = saldo real do último dia.
+// Período inteiro (os quatro dias): estoque inicial = saldo de abertura (antes do 1º dia), entrada = Entradas.txt dos quatro dias,
+// venda = os quatro dias. Disponível = estoque inicial + entrada. Estoque final = saldo real do último dia. Negativo conta como zero.
 // A entrada é referenciada pelo abastecimento do par loja + produto no arquivo de pedidos: automático, manual, os dois (misto)
 // ou sem pedido no arquivo (transferência entre lojas e outras entradas que o arquivo de pedidos não traz). Par com os dois: divide pela quantidade recebida de cada um.
 //
@@ -903,7 +912,10 @@ function sobraPorComprador(details, opcoes = {}) {
     let c = compradores.get(nome);
     if (!c) { c = novo(nome); compradores.set(nome, c); }
     if (row.inicial == null || row.final == null) { c.foraDaBase += 1; continue; }
-    const entrada = row.entradaMov || 0;
+    // Estoque inicial = saldo de abertura do período; entrada e venda = os quatro dias inteiros. Assim a conta fecha para o mesmo período.
+    // Saldo negativo do sistema conta como zero, na abertura e no final.
+    const abertura = Math.max(0, row.aberturaPeriodo ?? row.inicial);
+    const entrada = row.entradaPeriodo ?? row.entradaMov ?? 0;
     const negativo = row.final < -EPS;
     const sobra = negativo ? 0 : row.final;
     const venda = row.quantidade || 0;
@@ -922,7 +934,7 @@ function sobraPorComprador(details, opcoes = {}) {
       c.mapa.set(row.produto, p);
     }
     for (const alvo of [c, p]) {
-      alvo.inicial += row.inicial;
+      alvo.inicial += abertura;
       alvo.entrada += entrada;
       alvo.entAuto += parteAuto;
       alvo.entManual += parteManual;

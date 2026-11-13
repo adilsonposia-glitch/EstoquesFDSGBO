@@ -391,13 +391,14 @@ if (movimentoMode) {
   const comprador = new Map();
   linhas(entrada.dim).slice(1).forEach((l) => { const p = l.split(";"); comprador.set(p[1], p[7].trim()); });
   const vistos = new Set();
-  const entradaDia = new Map();
+  const entradaDia = new Map(), saidaDia11 = new Map();
   linhas(entrada.entradas).slice(1).forEach((l) => {
     if (vistos.has(l)) return;
     vistos.add(l);
     const p = l.split(";");
-    if (p.length < 8 || !KEEP.has(p[4]) || SAIDA.has(p[2])) return;
+    if (p.length < 8 || !KEEP.has(p[4])) return;
     const k = `${iso(p[0])}|${p[4]}|${p[5]}`;
+    if (SAIDA.has(p[2])) { saidaDia11.set(k, (saidaDia11.get(k) || 0) + num(p[7])); return; }
     entradaDia.set(k, (entradaDia.get(k) || 0) + num(p[7]));
   });
   // Pedido recebido por loja + produto, separado em automático e manual (revenda), como na seção 5.7.
@@ -415,14 +416,16 @@ if (movimentoMode) {
   const esperado = new Map();       // por comprador
   const prodEsperado = new Map();   // por comprador + produto
   let pares = 0, fora = 0, riscoPares = 0;
+  const residuo = new Map();
   const lojasVistas = new Set();
   for (const d of r.details) {
     lojasVistas.add(d.loja);
     const chave = `${d.loja}|${d.produto}`;
     const a = E1.mapa.get(chave), b = E2.mapa.get(chave);
     if (!a || !b) { fora += 1; continue; }
-    const dd = dias.filter((x) => x > a.data && x <= b.data);
-    const ent = dd.reduce((t, x) => t + (entradaDia.get(`${x}|${chave}`) || 0), 0);
+    // Período inteiro: abertura = partida da linha inicial quando a última movimentação é o 1º dia (senão o saldo do arquivo); entrada e venda dos quatro dias.
+    const abertura = Math.max(0, a.data === dias[0] ? a.partida : a.est);
+    const ent = dias.reduce((t, x) => t + (entradaDia.get(`${x}|${chave}`) || 0), 0);
     const venda = vendaPar.get(chave) || 0;
     const sobra = b.est < -EPS ? 0 : b.est;
     const nome = comprador.get(d.produto) || "";
@@ -433,11 +436,20 @@ if (movimentoMode) {
     const emRisco = b.est <= EPS || (venda > EPS && b.est > EPS && (b.est * 4) / venda < 1);
     for (const [mapa, k] of [[esperado, nome], [prodEsperado, `${nome}|${d.produto}`]]) {
       const c = mapa.get(k) || { nome, produto: d.produto, inicial: 0, entrada: 0, entAuto: 0, entManual: 0, entSemPedido: 0, venda: 0, sobra: 0, pares: 0, lojasRisco: 0 };
-      c.inicial += a.est; c.entrada += ent; c.entAuto += parteAuto; c.entManual += parteMan; c.entSemPedido += parteSem;
+      c.inicial += abertura; c.entrada += ent; c.entAuto += parteAuto; c.entManual += parteMan; c.entSemPedido += parteSem;
       c.venda += venda; c.sobra += sobra; c.pares += 1; c.lojasRisco += emRisco ? 1 : 0;
       mapa.set(k, c);
     }
     if (emRisco) riscoPares += 1;
+    // De onde vem o ajuste (resíduo) do par: saldo negativo zerado, saída registrada no arquivo de entradas, ou o que nenhum arquivo explica.
+    const resid = sobra - (abertura + ent - venda);
+    if (Math.abs(resid) > EPS) {
+      const sai = dias.reduce((t, x) => t + (saidaDia11.get(`${x}|${chave}`) || 0), 0);
+      const aberturaBruta = a.data === dias[0] ? a.partida : a.est;
+      const clip = b.est < -EPS || aberturaBruta < -EPS;
+      const cat = clip ? "negativo" : sai > EPS && Math.abs(resid + sai) <= EPS ? "saidaRegistrada" : "semExplicacao";
+      residuo.set(cat, { n: (residuo.get(cat)?.n || 0) + 1, u: (residuo.get(cat)?.u || 0) + resid });
+    }
     pares += 1;
   }
   const lista = sobraPorComprador(r.details);
@@ -517,6 +529,28 @@ if (movimentoMode) {
   // 11.7 Fechamento da conta
   lista.every((c) => Math.abs(c.produtos.reduce((t, p) => t + p.sobra, 0) - c.sobra) < 0.01 && Math.abs(c.produtos.reduce((t, p) => t + p.inicial + p.entrada, 0) - c.disponivel) < 0.01) ? pass("11.7a A soma da lista de produtos fecha com o total do card, em cada comprador") : falha("11.7a Lista de produtos × total do comprador");
   lista.every((c) => Math.abs(c.disponivel - c.venda + c.ajuste - c.sobra) < 0.01) ? pass("11.7b Disponível − vendeu + ajuste = estoque final, em cada comprador") : falha("11.7b Identidade do ajuste");
+  let erroPct = 0;
+  for (const c of lista) {
+    if (c.disponivel > EPS && Math.abs(c.pct - c.sobra / (c.inicial + c.entrada)) > 1e-9) erroPct += 1;
+    for (const p of c.produtos) {
+      const e = prodEsperado.get(`${c.comprador}|${p.produto}`);
+      if (!e || Math.abs(p.inicial - e.inicial) > 0.01 || (e.inicial + e.entrada > EPS && Math.abs(p.pct - e.sobra / (e.inicial + e.entrada)) > 1e-9)) erroPct += 1;
+    }
+  }
+  erroPct === 0 ? pass("11.7c Estoque inicial e % sobra = estoque final ÷ (inicial + entrada), em cada produto e comprador, recalculados do arquivo cru") : falha("11.7c % sobra ou estoque inicial", n0(erroPct));
+  // 11.8 O ajuste da rede é a soma dos resíduos dos pares recalculados do arquivo cru, e cada resíduo tem uma categoria.
+  const residuoTotal = [...residuo.values()].reduce((s, x) => s + x.u, 0);
+  const ajusteRede = lista.reduce((s, c) => s + c.ajuste, 0);
+  Math.abs(residuoTotal - ajusteRede) < 0.5 ? pass("11.8a Ajuste da rede = soma dos resíduos dos pares recalculados do arquivo cru", f2(ajusteRede)) : falha("11.8a Ajuste da rede", `engine ${f2(ajusteRede)} × arquivo ${f2(residuoTotal)}`);
+  const nomeCat = { negativo: "par com saldo negativo no sistema (conta como zero)", saidaRegistrada: "saída registrada no arquivo de entradas (operação 802, 902 ou 903)", semExplicacao: "sem explicação nos arquivos (quebra, transferência de saída, entrada não registrada)" };
+  for (const [cat, x] of residuo) info(`Ajuste: ${nomeCat[cat]}`, `${n0(x.n)} pares, ${f2(x.u)} un`);
+  const fechamPares = pares - [...residuo.values()].reduce((s, x) => s + x.n, 0);
+  info("Pares em que a conta fecha sem ajuste", `${n0(fechamPares)} de ${n0(pares)} (${(100 * fechamPares / pares).toFixed(1).replace(".", ",")}%)`);
+  // 11.9 Casos conferidos à mão na tela
+  for (const id of ["56713"]) {
+    const alvo = lista.flatMap((c) => c.produtos).find((p) => p.produto === id);
+    if (alvo) info(`Produto ${id} ${alvo.descricao}`, `inicial ${f2(alvo.inicial)} + entrada ${f2(alvo.entrada)} − vendeu ${f2(alvo.venda)} ${alvo.ajuste >= 0 ? "+" : "−"} ajuste ${f2(Math.abs(alvo.ajuste))} = final ${f2(alvo.sobra)}`);
+  }
   const t = lista.reduce((s, c) => ({ d: s.d + c.disponivel, s: s.s + c.sobra, a: s.a + c.ajuste }), { d: 0, s: 0, a: 0 });
   info("Rede", `disponível ${f2(t.d)} · estoque final ${f2(t.s)} (${(100 * t.s / t.d).toFixed(2).replace(".", ",")}%) · ajuste ${f2(t.a)}`);
   for (const c of lista) info(`${c.comprador}`, `${n0(c.produtos.length)} produtos: ${n0(c.nSobra)} com sobra · ${n0(c.nPadrao)} no padrão · ${n0(c.nRisco)} faltando`);

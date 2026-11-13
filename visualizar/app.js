@@ -1,4 +1,4 @@
-import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=46";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=47";
 
 // Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
 const buscar = (url) => fetch(url, { cache: "no-store" });
@@ -1642,6 +1642,7 @@ function renderSobra(result) {
     { k: "nRisco", t: "Faltando / risco", v: (c) => c.nRisco, c: (c) => `${itens(c.nRisco)} <small>${pc(c.nRisco, nProd(c))}</small>` },
     { k: "grafico", t: "Distribuição", v: (c) => c.nRisco / (nProd(c) || 1), c: (c) => barra(c) },
     { k: "pct", t: "% sobra", v: (c) => c.pct ?? -1, c: (c) => `<b>${c.pct == null ? "—" : pct(c.pct)}</b>` },
+    { k: "inicial", t: "Estoque inicial", v: (c) => c.inicial, c: (c) => qty(c.inicial) },
     { k: "entrada", t: "Entrada", v: (c) => c.entrada, c: (c) => qty(c.entrada) },
     { k: "entAuto", t: "Entrada automática", v: (c) => c.entAuto, c: (c) => qty(Math.round(c.entAuto)) },
     { k: "entManual", t: "Entrada manual", v: (c) => c.entManual, c: (c) => qty(Math.round(c.entManual)) },
@@ -1678,7 +1679,8 @@ function renderSobra(result) {
     const rotulo = partes.length === 1 ? partes[0].nome : "Misto";
     return `<span class="tag tag-${partes.length === 1 ? partes[0].k : "misto"}" title="${esc(dica)}">${rotulo}</span>`;
   };
-  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}${p.lojasRisco ? `<small class="alerta">${p.lojasRisco} de ${p.lojas} lojas sem estoque ou em risco</small>` : ""}</td><td class="num entrada">${qty(p.entrada)} ${abastecimento(p)}</td><td class="num">${qty(p.venda)}</td><td class="num"><b>${qty(p.sobra)}</b></td></tr>`;
+  const ajusteCel = (v) => (Math.abs(v) < 0.5 ? "—" : (v > 0 ? "+" : "−") + qty(Math.abs(v)));
+  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}${p.lojasRisco ? `<small class="alerta">${p.lojasRisco} de ${p.lojas} lojas sem estoque ou em risco</small>` : ""}</td><td class="num">${qty(p.inicial)}</td><td class="num entrada">${qty(p.entrada)} ${abastecimento(p)}</td><td class="num">${qty(p.venda)}</td><td class="num ajuste">${ajusteCel(p.ajuste)}</td><td class="num"><b>${qty(p.sobra)}</b></td><td class="num">${p.pct == null ? "—" : pct(p.pct)}</td></tr>`;
   const ordemGrupo = {
     sobra: (l) => l,
     padrao: (l) => l,
@@ -1686,7 +1688,7 @@ function renderSobra(result) {
   };
   const tabelaGrupo = (c, g) => {
     const itensG = ordemGrupo[g.id](c.produtos.filter((p) => p.classe === g.id));
-    return `<tbody class="grupo-${g.id}">${itensG.map(linhaProd).join("") || `<tr><td colspan="4" class="txt">Nenhum produto neste grupo.</td></tr>`}</tbody>`;
+    return `<tbody class="grupo-${g.id}">${itensG.map(linhaProd).join("") || `<tr><td colspan="7" class="txt">Nenhum produto neste grupo.</td></tr>`}</tbody>`;
   };
   const card = (c) => {
     const n = nProd(c);
@@ -1695,22 +1697,22 @@ function renderSobra(result) {
     <article class="card sobra-card g-sobra" data-comp="${esc(c.comprador)}">
       <header>
         <div><h3>${esc(c.comprador)}</h3><small>${itens(n)} produtos · ${itens(c.pares)} pares de loja</small></div>
-        <b class="sobra-pct" title="Estoque final ÷ (estoque inicial + entrada). Estoque inicial ${qty(c.inicial)} + entrada ${qty(c.entrada)} = ${qty(c.disponivel)}.">${c.pct == null ? "—" : pct(c.pct)}<small>sobra</small></b>
+        <b class="sobra-pct" title="Estoque final ÷ (estoque inicial + entrada). Estoque inicial ${qty(c.inicial)} + entrada ${qty(c.entrada)} = ${qty(c.disponivel)}.">${c.pct == null ? "—" : pct(c.pct)}<small>do disponível sobrou</small></b>
         ${botao("card")}
       </header>
-      <p class="sobra-conta"><span><em title="Entradas do Entradas.txt depois do 1º dia. As do 1º dia já estão dentro do estoque inicial.">Entrada</em>${qty(c.entrada)}</span><span><em>Vendeu</em>${qty(c.venda)}</span><span class="destaque"><em>Estoque final</em>${qty(c.sobra)}</span></p>
+      <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em title="Entradas do Entradas.txt nos quatro dias do período.">Entrada</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em title="O que a conta não explica: quebra, transferência de saída ou entrada não registrada.">Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Estoque final</em>${qty(c.sobra)}</span></p>
       <p class="sobra-origem" title="Cada entrada é ligada ao abastecimento do par loja + produto no arquivo de pedidos. Sem pedido: transferência entre lojas e outras entradas que o arquivo de pedidos não traz.">Entrada por abastecimento: ${partes.length ? partes.map((x) => `${x.nome.toLowerCase()} <b>${qty(Math.round(x.v))}</b>`).join(" · ") : "sem entrada"}</p>
       <div class="sobra-situacao">
-        <p class="sobra-quanto">Dos <b>${itens(n)}</b> produtos:</p>
+        <p class="sobra-quanto">Dos <b>${itens(n)}</b> produtos (conta de produtos, não de unidades):</p>
         ${barra(c)}
         <div class="sobra-grupos" role="group" aria-label="Produtos por situação">
-          ${GRUPOS_SOBRA.map((g, i) => { const q = [c.nSobra, c.nPadrao, c.nRisco][i]; return `<button type="button" class="grupo-btn grupo-btn-${g.id}" data-grupo="${g.id}" title="${esc(g.dica)}"><span>${g.nome}</span><b>${itens(q)}</b><small>${pc(q, n)}</small></button>`; }).join("")}
+          ${GRUPOS_SOBRA.map((g, i) => { const q = [c.nSobra, c.nPadrao, c.nRisco][i]; return `<button type="button" class="grupo-btn grupo-btn-${g.id}" data-grupo="${g.id}" title="${esc(g.dica)}"><span>${g.nome}</span><b>${itens(q)}</b><small>${pc(q, n)} dos produtos</small></button>`; }).join("")}
         </div>
       </div>
       <details class="sobra-lista">
         <summary>Ver os produtos do grupo escolhido</summary>
         <div class="table-wrap"><table class="sobra-tabela sobra-prod">
-          <thead><tr><th class="txt">Produto</th><th class="num" title="Entradas do Entradas.txt depois do 1º dia. A etiqueta diz o abastecimento: automático, manual ou sem pedido no arquivo de pedidos. Misto: mais de um; passe o mouse para ver as quantidades.">Entrada</th><th class="num">Vendeu</th><th class="num" title="Estoque do último dia">Estoque final</th></tr></thead>
+          <thead><tr><th class="txt">Produto</th><th class="num" title="Saldo de abertura do período, antes do 1º dia.">Estoque inicial</th><th class="num" title="Entradas do Entradas.txt nos quatro dias. A etiqueta diz o abastecimento: automático, manual ou sem pedido no arquivo de pedidos. Misto: mais de um; passe o mouse para ver as quantidades.">Entrada</th><th class="num">Vendeu</th><th class="num" title="Fecha a conta da linha: estoque inicial + entrada − vendeu + ajuste = estoque final. É o que os arquivos não explicam: quebra, transferência de saída, entrada não registrada, saldo negativo do sistema.">Ajuste</th><th class="num" title="Estoque do último dia">Estoque final</th><th class="num" title="Estoque final ÷ (estoque inicial + entrada)">% sobra</th></tr></thead>
           ${GRUPOS_SOBRA.map((g) => tabelaGrupo(c, g)).join("")}
         </table></div>
       </details>
@@ -1725,7 +1727,7 @@ function renderSobra(result) {
     </div>
     ${comparacao}
     <div class="sobra-grade">${lista.map(card).join("")}</div>
-    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível, só nas 13 lojas: a central (70, CD) fica de fora. Disponível = estoque inicial + entrada. A entrada é a do Entradas.txt depois do 1º dia: as do 1º dia já estão dentro do estoque inicial, porque o arquivo de estoque do primeiro dia fecha o dia. Estoque final = saldo do último dia. % sobra = estoque final ÷ disponível (passe o mouse no percentual do card para ver estoque inicial + entrada). Estoque final não é igual a disponível − vendeu: o que sobra da conta é saída que nenhum arquivo traz (quebra, transferência) ou entrada não registrada. A entrada é referenciada ao abastecimento do par loja + produto no arquivo de pedidos: automático, manual ou sem pedido (transferência entre lojas e outras entradas que o arquivo de pedidos não traz). Se o par tem pedido automático e manual, a entrada se divide pela quantidade recebida de cada um. Situação do produto, olhando as lojas uma a uma: Faltando = pelo menos uma loja sem saldo ou com saldo para menos dias de venda que o limite de risco; Com sobra = nenhuma loja em risco e saldo para o limite de sobra em dias de venda ou mais (ou sem venda); No padrão = nenhuma loja em risco e saldo entre os dois. Soma de unidades de produtos diferentes: compare pelo percentual e pelas contagens, e aja pela lista de produtos. Rede: ${rede.pct == null ? "—" : pct(rede.pct)} de sobra em ${itens(rede.pares)} pares; ${itens(rede.fora)} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>`;
+    <p class="note">Por comprador, o que sobrou do que a oferta teve disponível, só nas 13 lojas: a central (70, CD) fica de fora. Tudo é do período inteiro, os quatro dias: estoque inicial = saldo de abertura, antes do 1º dia (o arquivo de estoque do primeiro dia fecha o dia, então a abertura sai da partida da linha dele); entrada = Entradas.txt dos quatro dias; vendeu = venda dos quatro dias. Disponível = estoque inicial + entrada. Estoque final = saldo do último dia. Saldo negativo do sistema conta como zero. Duas porcentagens diferentes: o percentual grande do card é de unidades (estoque final ÷ disponível); os percentuais dos grupos são de produtos (quantos produtos estão com sobra, no padrão ou faltando). Ajuste = o que a conta não explica (estoque final − (disponível − vendeu)): negativo é saída que nenhum arquivo traz, como quebra ou transferência; positivo é entrada não registrada. A entrada é referenciada ao abastecimento do par loja + produto no arquivo de pedidos: automático, manual ou sem pedido (transferência entre lojas e outras entradas que o arquivo de pedidos não traz). Se o par tem pedido automático e manual, a entrada se divide pela quantidade recebida de cada um. Situação do produto, olhando as lojas uma a uma: Faltando = pelo menos uma loja sem saldo ou com saldo para menos dias de venda que o limite de risco; Com sobra = nenhuma loja em risco e saldo para o limite de sobra em dias de venda ou mais (ou sem venda); No padrão = nenhuma loja em risco e saldo entre os dois. Soma de unidades de produtos diferentes: compare pelo percentual e pelas contagens, e aja pela lista de produtos. Rede: ${rede.pct == null ? "—" : pct(rede.pct)} de sobra em ${itens(rede.pares)} pares; ${itens(rede.fora)} pares ficam fora por não terem as duas linhas de estoque. Exportar CSV traz todos os produtos de todos os compradores.</p>`;
 
   /* interações */
   const sair = () => {

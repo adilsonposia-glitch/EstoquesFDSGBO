@@ -265,4 +265,3 @@ button.card:hover { border-color: var(--navy); }
 .tag-misto { background: #fdf0d2; color: #7a5200; }
 
 .sobra-prod td.entrada .tag { margin-left: 6px; }
-.sobra-conta { display: flex; gap: 28px; flex-wrap: wrap; }
