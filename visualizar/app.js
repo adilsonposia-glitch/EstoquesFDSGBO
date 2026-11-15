@@ -29,6 +29,7 @@ const state = {
   pageSize: 40,
   loja: "",
   lojaGlobal: "",
+  medida: "valor",
   cacheLoja: new Map(),
   comprador: "",
   produto: "",
@@ -532,7 +533,16 @@ async function vendaDaRaiz() {
 }
 
 const MARGEM = 0.05;
+const QMARGEM = 0.05;
 const EPS_TELA = 0.05;
+
+function faixaDe(antes, agora, margem) {
+  if (antes <= margem && agora <= margem) return "zero";
+  if (antes <= margem && agora > margem) return "passou";
+  if (agora > antes + margem) return "subiu";
+  if (antes > agora + margem) return "caiu";
+  return "manteve";
+}
 
 function vendaAtualPorProduto(result) {
   const mapa = new Map();
@@ -566,12 +576,22 @@ function comparacaoVenda(result) {
     const antes = anterior.produtos[id] || { valor: 0, quantidade: 0 };
     const delta = item.valor - antes.valor;
     const repetiu = Boolean(info.naAnterior.get(id));
-    let faixa = "manteve";
-    if (antes.valor <= MARGEM && item.valor <= MARGEM) faixa = "zero";
-    else if (antes.valor <= MARGEM && item.valor > MARGEM) faixa = "passou";
-    else if (item.valor > antes.valor + MARGEM) faixa = "subiu";
-    else if (antes.valor > item.valor + MARGEM) faixa = "caiu";
-    linhas.push({ ...item, antes: antes.valor, qtdAntes: antes.quantidade, delta, percentual: antes.valor > MARGEM ? delta / antes.valor : null, repetiu, faixa });
+    const faixa = faixaDe(antes.valor, item.valor, MARGEM);
+    // Mesma leitura em unidades (kg para os pesáveis). Preço médio = valor ÷ quantidade, só quando há venda em unidades.
+    const faixaQtd = faixaDe(antes.quantidade, item.quantidade, QMARGEM);
+    const deltaQtd = item.quantidade - antes.quantidade;
+    const precoAntes = antes.quantidade > QMARGEM ? antes.valor / antes.quantidade : null;
+    const precoAgora = item.quantidade > QMARGEM ? item.valor / item.quantidade : null;
+    const divergencia = faixa === "subiu" && faixaQtd === "caiu" ? "valor-sobe-qtd-cai" : faixa === "caiu" && faixaQtd === "subiu" ? "valor-cai-qtd-sobe" : "";
+    // Ponte da variação: delta = quantidade × preço antigo + (preço novo − preço antigo) × quantidade nova. Quem não tem venda em unidades dos dois lados vai para "sem base de preço".
+    const comBase = precoAntes != null && precoAgora != null;
+    const efQuantidade = comBase ? deltaQtd * precoAntes : 0;
+    const efPreco = comBase ? (precoAgora - precoAntes) * item.quantidade : 0;
+    const efSemBase = comBase ? 0 : delta;
+    linhas.push({
+      ...item, antes: antes.valor, qtdAntes: antes.quantidade, delta, percentual: antes.valor > MARGEM ? delta / antes.valor : null, repetiu, faixa,
+      deltaQtd, percentualQtd: antes.quantidade > QMARGEM ? deltaQtd / antes.quantidade : null, faixaQtd, precoAntes, precoAgora, divergencia, efQuantidade, efPreco, efSemBase,
+    });
   }
   const repetidos = linhas.filter((row) => row.repetiu);
   const estreantes = linhas.filter((row) => !row.repetiu);
@@ -599,6 +619,21 @@ function comparacaoVenda(result) {
     zero: contar(repetidos, "zero"),
     passou: contar(repetidos, "passou"),
     estreiaZero: estreantes.filter((row) => row.valor <= MARGEM),
+    // Mesmos grupos pela quantidade vendida
+    subiuQtd: repetidos.filter((row) => row.faixaQtd === "subiu"),
+    caiuQtd: repetidos.filter((row) => row.faixaQtd === "caiu"),
+    zeroQtd: repetidos.filter((row) => row.faixaQtd === "zero"),
+    passouQtd: repetidos.filter((row) => row.faixaQtd === "passou"),
+    estreiaZeroQtd: estreantes.filter((row) => row.quantidade <= QMARGEM),
+    divSobe: repetidos.filter((row) => row.divergencia === "valor-sobe-qtd-cai"),
+    divCai: repetidos.filter((row) => row.divergencia === "valor-cai-qtd-sobe"),
+    ponte: {
+      quantidade: soma(repetidos, "efQuantidade"),
+      preco: soma(repetidos, "efPreco"),
+      semBase: soma(repetidos, "efSemBase"),
+    },
+    qtdRepetidosAntes: soma(repetidos, "qtdAntes"),
+    qtdRepetidosAgora: soma(repetidos, "quantidade"),
     deltaRepetidos: soma(repetidos, "delta"),
     vendaRepetidosAntes: soma(repetidos, "antes"),
     vendaRepetidosAgora: soma(repetidos, "valor"),
@@ -1063,6 +1098,7 @@ function render() {
   }
   subtitle.textContent = `${result.periodo[0]} a ${result.periodo[3]} · quinta a domingo${state.lojaGlobal ? ` · só a loja ${LOJAS[state.lojaGlobal]}` : ""}`;
   sincronizarLoja();
+  sincronizarMedida();
   if (state.view === "capa") renderCapa(result);
   else if (state.view === "detalhe") renderDetalhe();
   else if (state.view === "lojas") renderLojas(result);
@@ -1489,35 +1525,89 @@ function htmlRepeticao(result, info, esc) {
   return `<h2 class="section">Itens que repetem</h2><div class="cards">${cards}</div><p class="note">O clique abre os produtos dessa faixa. Percentual dos produtos de oferta desta semana. Semanas guardadas: ${guardadas}.${aviso} A mais antiga sai ao chegar em quatro.</p>${htmlComparacao(result, esc)}`;
 }
 
+/* Medida da comparação entre semanas: valor (R$), quantidade ou os dois. Muda como os produtos são classificados (subiu, caiu...).
+   As colunas de valor, quantidade e preço médio aparecem sempre nas listas. */
+const MEDIDAS = [["valor", "Valor (R$)"], ["quantidade", "Quantidade"], ["ambos", "Os dois"]];
+
+function seletorMedida(classe = "") {
+  return `<label class="filtro-loja ${classe}"><span>Medir por</span><select class="sel-medida" title="Vale para a comparação com a semana anterior: Valor classifica pelo R$, Quantidade pelas unidades (kg nos pesáveis), Os dois mostra as duas contagens em cada cartão">${MEDIDAS.map(([id, nome]) => `<option value="${id}" ${state.medida === id ? "selected" : ""}>${nome}</option>`).join("")}</select></label>`;
+}
+
+function sincronizarMedida() {
+  document.querySelectorAll(".sel-medida").forEach((el) => { el.value = state.medida; });
+}
+
+// Grupos da comparação pela medida escolhida. Os dois usa o valor para classificar e mostra a contagem em unidades ao lado.
+function gruposDaMedida(comp, medida = state.medida) {
+  const q = medida === "quantidade";
+  return {
+    subiu: q ? comp.subiuQtd : comp.subiu,
+    caiu: q ? comp.caiuQtd : comp.caiu,
+    zero: q ? comp.zeroQtd : comp.zero,
+    passou: q ? comp.passouQtd : comp.passou,
+    "estreia-zero": q ? comp.estreiaZeroQtd : comp.estreiaZero,
+    "valor-sobe-qtd-cai": comp.divSobe,
+    "valor-cai-qtd-sobe": comp.divCai,
+  };
+}
+
+const LEITURA_PRECO = { "valor-sobe-qtd-cai": "Preço mais alto", "valor-cai-qtd-sobe": "Preço mais baixo" };
+
 function htmlComparacao(result, esc) {
   const comp = comparacaoVenda(result);
   if (!comp) return "";
-  const card = (id, rotulo, quantidade, base, texto) => `<button type="button" class="card comp" data-faixa="${id}" data-rotulo="${esc(rotulo)}">${dica(texto, esc, true)}<span>${esc(rotulo)}</span><strong>${itens(quantidade)}</strong><em class="parte">${parte(quantidade, base)}</em></button>`;
+  const q = state.medida === "quantidade";
+  const grupos = gruposDaMedida(comp);
+  const rotuloMedida = q ? "quantidade vendida (unidades, kg nos pesáveis)" : "valor vendido (R$)";
+  const preco = (v) => (v == null ? "—" : money(v));
+  const card = (id, rotulo, base, texto) => {
+    const n = grupos[id].length;
+    const extra = state.medida === "ambos" ? ` · em unidades ${itens(outrosQtd[id].length)}` : "";
+    return `<button type="button" class="card comp" data-faixa="${id}" data-rotulo="${esc(rotulo)}">${dica(texto, esc, true)}<span>${esc(rotulo)}</span><strong>${itens(n)}</strong><em class="parte">${parte(n, base)}${extra}</em></button>`;
+  };
+  const outrosQtd = gruposDaMedida(comp, "quantidade");
   const repetidos = comp.repetidos.length;
   const estreantes = comp.estreantes.length;
+  const lido = q ? "a quantidade vendida" : "a venda";
   const cards = [
-    card("subiu", "Repetidos que venderam mais", comp.subiu.length, repetidos, "Produto que repetiu na oferta e a venda dos arquivos diários desta semana passou da anterior. O percentual é sobre os produtos que repetiram."),
-    card("caiu", "Repetidos que venderam menos", comp.caiu.length, repetidos, "Produto que repetiu na oferta e a venda dos arquivos diários desta semana ficou abaixo da anterior. O percentual é sobre os produtos que repetiram."),
-    card("zero", "Repetidos sem venda nas duas semanas", comp.zero.length, repetidos, "Produto que repetiu na oferta e não teve venda nos arquivos diários das duas semanas. Não usa ruptura. O percentual é sobre os produtos que repetiram."),
-    card("passou", "Repetidos que passaram a vender", comp.passou.length, repetidos, "Produto que repetiu na oferta, não vendeu na semana anterior e vendeu nesta. O percentual é sobre os produtos que repetiram."),
-    card("estreia-zero", "Estreantes sem venda", comp.estreiaZero.length, estreantes, "Produto que estreou nesta oferta e não teve venda nesta semana. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. O percentual é sobre os estreantes."),
+    card("subiu", "Repetidos que venderam mais", repetidos, `Produto que repetiu na oferta e ${lido} dos arquivos diários desta semana passou da anterior. O percentual é sobre os produtos que repetiram.`),
+    card("caiu", "Repetidos que venderam menos", repetidos, `Produto que repetiu na oferta e ${lido} dos arquivos diários desta semana ficou abaixo da anterior. O percentual é sobre os produtos que repetiram.`),
+    card("zero", "Repetidos sem venda nas duas semanas", repetidos, "Produto que repetiu na oferta e não teve venda nos arquivos diários das duas semanas. Não usa ruptura. O percentual é sobre os produtos que repetiram."),
+    card("passou", "Repetidos que passaram a vender", repetidos, "Produto que repetiu na oferta, não vendeu na semana anterior e vendeu nesta. O percentual é sobre os produtos que repetiram."),
+    card("estreia-zero", "Estreantes sem venda", estreantes, "Produto que estreou nesta oferta e não teve venda nesta semana. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. O percentual é sobre os estreantes."),
+    card("valor-sobe-qtd-cai", "Venderam mais em R$ e menos em unidades", repetidos, "Produto que repetiu, vendeu mais em reais e menos em unidades: o preço médio de venda subiu. O percentual é sobre os produtos que repetiram."),
+    card("valor-cai-qtd-sobe", "Venderam menos em R$ e mais em unidades", repetidos, "Produto que repetiu, vendeu menos em reais e mais em unidades: o preço médio de venda caiu. O percentual é sobre os produtos que repetiram."),
   ].join("");
+  const tag = (row) => (row.divergencia ? `<span class="tag ${row.divergencia === "valor-sobe-qtd-cai" ? "tag-misto" : "tag-entManual"}">${LEITURA_PRECO[row.divergencia]}</span>` : "");
   const ranking = (titulo, linhas) => {
-    const body = linhas.map((row) => `<tr><td>${row.produto}</td><td>${esc(row.descricao)}</td><td class="num">${money(row.antes)}</td><td class="num">${money(row.valor)}</td><td class="num">${money(row.delta)}</td><td class="num">${row.percentual == null ? "—" : pct(row.percentual)}</td></tr>`).join("");
-    return `<div><h2>${esc(titulo)}</h2><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Descrição</th><th class="num">Semana anterior</th><th class="num">Esta semana</th><th class="num">Diferença</th><th class="num">Variação</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+    const body = linhas.map((row) => `<tr><td>${row.produto}</td><td>${esc(row.descricao)}</td><td class="num">${money(row.antes)}</td><td class="num">${money(row.valor)}</td><td class="num">${money(row.delta)}</td><td class="num">${row.percentual == null ? "—" : pct(row.percentual)}</td><td class="num">${qty(row.qtdAntes)}</td><td class="num">${qty(row.quantidade)}</td><td class="num">${qty(row.deltaQtd)}</td><td class="num">${row.percentualQtd == null ? "—" : pct(row.percentualQtd)}</td><td class="num">${preco(row.precoAntes)}</td><td class="num">${preco(row.precoAgora)}</td><td>${tag(row)}</td></tr>`).join("");
+    return `<div><h2>${esc(titulo)}</h2><div class="table-wrap"><table><thead><tr><th>Produto</th><th>Descrição</th><th class="num">R$ anterior</th><th class="num">R$ agora</th><th class="num">Dif. R$</th><th class="num">Var. R$</th><th class="num">Qtd anterior</th><th class="num">Qtd agora</th><th class="num">Dif. qtd</th><th class="num">Var. qtd</th><th class="num" title="Valor ÷ quantidade da semana">Preço médio anterior</th><th class="num">Preço médio agora</th><th>Leitura</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   };
-  const altas = [...comp.subiu].sort((a, b) => b.delta - a.delta).slice(0, 8);
-  const quedas = [...comp.caiu].sort((a, b) => a.delta - b.delta).slice(0, 8);
-  const estreiaAlta = [...comp.estreantes].sort((a, b) => b.valor - a.valor).slice(0, 8);
+  const campoDelta = q ? "deltaQtd" : "delta";
+  const campoAgora = q ? "quantidade" : "valor";
+  const altas = [...grupos.subiu].sort((a, b) => b[campoDelta] - a[campoDelta]).slice(0, 8);
+  const quedas = [...grupos.caiu].sort((a, b) => a[campoDelta] - b[campoDelta]).slice(0, 8);
+  const estreiaAlta = [...comp.estreantes].sort((a, b) => b[campoAgora] - a[campoAgora]).slice(0, 8);
   const lojas = comp.lojas.map((loja) => `<tr><td>${esc(loja.nome)}</td><td class="num">${pct(loja.antes)}</td><td class="num">${pct(loja.agora)}</td><td class="num">${loja.pontos.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</td><td class="num">${money(loja.ofertaAgora - loja.ofertaAntes)}</td></tr>`).join("");
   const partAntes = comp.totalAntes ? comp.vendaOfertaAntes / comp.totalAntes : 0;
   const partAgora = result.rede.total ? result.rede.venda / result.rede.total : 0;
+  const ponte = comp.ponte;
+  const soma = ponte.quantidade + ponte.preco + ponte.semBase;
+  const sg = (v) => `${v >= 0 ? "+" : "−"}${money(Math.abs(v))}`;
   return `
-    <h2 class="section">Venda em relação à semana ${diaCurto(comp.inicio)} a ${diaCurto(comp.fim)}</h2>
+    <h2 class="section">Venda em relação à semana ${diaCurto(comp.inicio)} a ${diaCurto(comp.fim)} ${seletorMedida("no-card")}</h2>
     <div class="cards">${cards}</div>
-    <p class="note">A venda do produto é a dos quatro arquivos diários. O percentual dos quatro primeiros cartões é sobre os ${itens(comp.repetidos.length)} que repetiram. O de estreantes sem venda é sobre os ${itens(comp.estreantes.length)} que estrearam: eles não estavam na oferta da semana anterior, então a venda considerada é a desta semana. Sem venda nas duas semanas vale só para quem repetiu e fica para a RP. Esta comparação não usa ruptura. Os repetidos saíram de ${money(comp.vendaRepetidosAntes)} para ${money(comp.vendaRepetidosAgora)} (${money(comp.deltaRepetidos)}). Os estreantes venderam ${money(comp.vendaEstreantes)} nesta semana.</p>
-    <div class="duas-tabelas">${ranking("Maiores altas entre os repetidos", altas)}${ranking("Maiores quedas entre os repetidos", quedas)}</div>
-    ${ranking("Maiores vendas entre os estreantes", estreiaAlta)}
+    <p class="note">Classificado por ${rotuloMedida}. A venda do produto é a dos quatro arquivos diários. O percentual dos cartões é sobre os ${itens(comp.repetidos.length)} que repetiram. O de estreantes sem venda é sobre os ${itens(comp.estreantes.length)} que estrearam: eles não estavam na oferta da semana anterior, então a venda considerada é a desta semana. Sem venda nas duas semanas vale só para quem repetiu e fica para a RP. Esta comparação não usa ruptura. Os repetidos saíram de ${money(comp.vendaRepetidosAntes)} para ${money(comp.vendaRepetidosAgora)} (${money(comp.deltaRepetidos)}) e de ${qty(comp.qtdRepetidosAntes)} para ${qty(comp.qtdRepetidosAgora)} unidades (kg nos pesáveis; a soma mistura produtos e serve só de referência, a leitura é por produto). Os estreantes venderam ${money(comp.vendaEstreantes)} nesta semana. Os dois últimos cartões são o produto cuja venda em reais e em unidades andou em sentidos opostos: o preço médio mudou.</p>
+    <h2 class="section">De onde veio a variação dos repetidos</h2>
+    <div class="table-wrap"><table class="ponte"><thead><tr><th>Parte da variação</th><th class="num">R$</th><th>Como ler</th></tr></thead><tbody>
+      <tr><td>Venda dos repetidos na semana anterior</td><td class="num">${money(comp.vendaRepetidosAntes)}</td><td>Ponto de partida.</td></tr>
+      <tr><td>Efeito quantidade</td><td class="num">${sg(ponte.quantidade)}</td><td>Quanto mudou por vender mais ou menos unidades, ao preço médio da semana anterior.</td></tr>
+      <tr><td>Efeito preço</td><td class="num">${sg(ponte.preco)}</td><td>Quanto mudou porque o preço médio de venda mudou, sobre as unidades desta semana. Inclui promoção, desconto e mudança de mix entre lojas.</td></tr>
+      <tr><td>Sem base de preço</td><td class="num">${sg(ponte.semBase)}</td><td>Produto sem venda em unidades em uma das duas semanas: não há preço para comparar.</td></tr>
+      <tr class="total"><td>Venda dos repetidos nesta semana</td><td class="num">${money(comp.vendaRepetidosAntes + soma)}</td><td>${Math.abs(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora) < 0.05 ? "Fecha com a soma dos produtos." : `Diferença de ${money(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora)}.`}</td></tr>
+    </tbody></table></div>
+    <div class="duas-tabelas">${ranking(q ? "Maiores altas em quantidade entre os repetidos" : "Maiores altas entre os repetidos", altas)}${ranking(q ? "Maiores quedas em quantidade entre os repetidos" : "Maiores quedas entre os repetidos", quedas)}</div>
+    ${ranking(q ? "Maiores vendas em quantidade entre os estreantes" : "Maiores vendas entre os estreantes", estreiaAlta)}
     <h2 class="section">Participação da oferta por loja</h2>
     <p class="note">A rede saiu de ${pct(partAntes)} para ${pct(partAgora)}. A participação continua sendo a venda do arquivo de ofertas dividida pela venda da loja.</p>
     <div class="table-wrap"><table><thead><tr><th>Loja</th><th class="num">Semana anterior</th><th class="num">Esta semana</th><th class="num">Pontos</th><th class="num">Diferença da oferta</th></tr></thead><tbody>${lojas}</tbody></table></div>`;
@@ -1604,14 +1694,7 @@ function renderRepeticao() {
 function linhasDaFaixa() {
   const comp = comparacaoVenda(state.result);
   if (!comp) return [];
-  const faixas = {
-    subiu: comp.subiu,
-    caiu: comp.caiu,
-    zero: comp.zero,
-    passou: comp.passou,
-    "estreia-zero": comp.estreiaZero,
-  };
-  return faixas[state.repeticao] || [];
+  return gruposDaMedida(comp)[state.repeticao] || [];
 }
 
 function renderVendaSemana() {
@@ -1626,11 +1709,18 @@ function renderVendaSemana() {
     { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
     { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
     { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
-    { key: "antes", label: "Semana anterior", num: !estreante, value: (row) => estreante ? 0 : row.antes, cell: (row) => estreante ? "Não estava na oferta" : money(row.antes) },
-    { key: "valor", label: "Esta semana", num: true, value: (row) => row.valor, cell: (row) => money(row.valor) },
-    { key: "delta", label: "Diferença", num: true, value: (row) => row.delta, cell: (row) => estreante ? "—" : money(row.delta) },
-    { key: "percentual", label: "Variação", num: true, value: (row) => row.percentual ?? -999, cell: (row) => row.percentual == null || estreante ? "—" : pct(row.percentual) },
-  ], rows)}<p class="note">${estreante ? "Estreante começa nesta oferta. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. Sem venda é a desta semana." : "Variação em branco é semana anterior sem venda. A lista sem venda nas duas semanas não separa ruptura."}</p>`);
+    { key: "antes", label: "R$ anterior", num: !estreante, value: (row) => estreante ? 0 : row.antes, cell: (row) => estreante ? "Não estava na oferta" : money(row.antes) },
+    { key: "valor", label: "R$ agora", num: true, value: (row) => row.valor, cell: (row) => money(row.valor) },
+    { key: "delta", label: "Dif. R$", num: true, value: (row) => row.delta, cell: (row) => estreante ? "—" : money(row.delta) },
+    { key: "percentual", label: "Var. R$", num: true, value: (row) => row.percentual ?? -999, cell: (row) => row.percentual == null || estreante ? "—" : pct(row.percentual) },
+    { key: "qtdAntes", label: "Qtd anterior", num: true, value: (row) => row.qtdAntes, cell: (row) => estreante ? "—" : qty(row.qtdAntes) },
+    { key: "quantidade", label: "Qtd agora", num: true, value: (row) => row.quantidade, cell: (row) => qty(row.quantidade) },
+    { key: "deltaQtd", label: "Dif. qtd", num: true, value: (row) => row.deltaQtd, cell: (row) => estreante ? "—" : qty(row.deltaQtd) },
+    { key: "percentualQtd", label: "Var. qtd", num: true, value: (row) => row.percentualQtd ?? -999, cell: (row) => row.percentualQtd == null || estreante ? "—" : pct(row.percentualQtd) },
+    { key: "precoAntes", label: "Preço médio anterior", num: true, value: (row) => row.precoAntes ?? -1, cell: (row) => row.precoAntes == null || estreante ? "—" : money(row.precoAntes) },
+    { key: "precoAgora", label: "Preço médio agora", num: true, value: (row) => row.precoAgora ?? -1, cell: (row) => row.precoAgora == null ? "—" : money(row.precoAgora) },
+    { key: "leitura", label: "Leitura", value: (row) => LEITURA_PRECO[row.divergencia] || "", cell: (row) => LEITURA_PRECO[row.divergencia] || "" },
+  ], rows)}<p class="note">${estreante ? "Estreante começa nesta oferta. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. Sem venda é a desta semana." : "Variação em branco é semana anterior sem venda. A lista sem venda nas duas semanas não separa ruptura."} Grupo formado por ${state.medida === "quantidade" ? "quantidade vendida" : "valor vendido"}. Preço médio é o valor dividido pela quantidade da semana. Preço mais alto: vendeu mais em reais e menos em unidades. Preço mais baixo: o contrário.</p>`);
   document.querySelector("#voltar").onclick = voltarCapa;
   bindFilters(rows);
 }
@@ -1941,7 +2031,7 @@ function renderDetail() {
 
 function exportCsv() {
   const rows = state.view === "detalhe" && state.grupo === "venda-semana"
-    ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual }))
+    ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual, quantidadeAnterior: state.repeticao === "estreia-zero" ? "" : row.qtdAntes, quantidadeAgora: row.quantidade, diferencaQuantidade: state.repeticao === "estreia-zero" ? "" : row.deltaQtd, variacaoQuantidade: state.repeticao === "estreia-zero" ? "" : row.percentualQtd, precoMedioAnterior: row.precoAntes ?? "", precoMedioAgora: row.precoAgora ?? "", leitura: LEITURA_PRECO[row.divergencia] || "" }))
     : state.view === "detalhe" && state.grupo === "lancamento"
     ? state.result?.lancamento?.porNome || []
     : state.view === "sobra" ? sobraPorComprador(state.result?.details || [], { risco: sobraCfg.risco, sobraDias: sobraCfg.dias }).flatMap((c) => c.produtos.map((p) => ({ comprador: c.comprador, produto: p.produto, descricao: p.descricao, lojas: p.lojas, estoqueInicial: p.inicial, entrada: p.entrada, entradaAutomatica: Math.round(p.entAuto), entradaManual: Math.round(p.entManual), entradaSemPedido: Math.round(p.entSemPedido), vendeu: p.venda, estoqueFinal: p.sobra, percentualSobra: p.pct == null ? "" : p.pct, situacao: p.classe, lojasEmRisco: p.lojasRisco, contaAberta: p.abertos, recebidoSemEntrada: p.recSemEntrada })))
@@ -1994,9 +2084,16 @@ document.querySelector("#pick").onclick = async () => {
 document.querySelector("#export").onclick = exportCsv;
 // Filtro por loja: o do alto da página e os dos cards são o mesmo filtro.
 document.querySelector("#loja-global-caixa").innerHTML = seletorLoja("no-topo");
+document.querySelector("#medida-caixa").innerHTML = seletorMedida("no-topo");
 document.addEventListener("change", (event) => {
   if (event.target.classList?.contains("sel-loja")) trocarLoja(event.target.value);
+  if (event.target.classList?.contains("sel-medida")) {
+    state.medida = ["valor", "quantidade", "ambos"].includes(event.target.value) ? event.target.value : "valor";
+    state.page = 0;
+    sincronizarMedida();
+    render();
+  }
 });
-window.__fdsTeste = { state, trocarLoja, comparacaoVenda, sobraPorComprador };
+window.__fdsTeste = { state, trocarLoja, comparacaoVenda, sobraPorComprador, gruposDaMedida };
 render();
 run(loadServerFiles);

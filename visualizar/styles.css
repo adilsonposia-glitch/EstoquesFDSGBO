@@ -286,3 +286,9 @@ button.card:hover { border-color: var(--navy); }
 .sobra-prod tr.sub-loja td.prod { padding-left: 22px; overflow: visible; text-overflow: clip; }
 .sobra-prod tr.sub-loja.sub-risco td.prod { box-shadow: inset 4px 0 0 var(--vermelho); }
 .sobra-prod tr.sub-loja small.alerta { margin-left: 8px; display: inline; }
+
+/* Medida da comparacao (valor, quantidade) e ponte da variacao */
+h2.section .filtro-loja { margin-left: 14px; font-weight: 400; vertical-align: middle; }
+.ponte td, .ponte th { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+.ponte .num { text-align: right; white-space: nowrap; }
+.ponte tr.total td { font-weight: 700; background: #eef3ee; }
