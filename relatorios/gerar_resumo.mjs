@@ -233,10 +233,10 @@ function graficoGrupos() {
   let s = `<svg class="largo" viewBox="0 0 720 ${linhas.length * 40 + 16}" role="img" aria-label="Os ${int(total)} produtos que repetiram na oferta, por comportamento de venda">
         <line class="eixo" x1="${x0}" y1="6" x2="${x0}" y2="${linhas.length * 40 + 8}"/>`;
   linhas.forEach(([rot, n, c], i) => {
-    const t = 14 + i * 40, w = n * k;
+    const t = 14 + i * 40, w = n * k, atraso = (i * 0.08).toFixed(2);
     s += `
         <text x="${x0 - 10}" y="${t + 16}" text-anchor="end">${rot}</text>
-        <rect class="${c}" x="${x0}" y="${t}" width="${w.toFixed(1)}" height="22" rx="3"/>
+        <rect class="${c}" x="${x0}" y="${t}" width="${w.toFixed(1)}" height="22" rx="3" style="--atraso:${atraso}s"/>
         <text x="${(x0 + w + 8).toFixed(1)}" y="${t + 16}">${int(n)} · ${f((n / total) * 100, 2)}%</text>`;
   });
   return s + "\n      </svg>";
@@ -396,7 +396,7 @@ const main = `
   <section>
     <h2>Os ${int(cruz.repetidos)} produtos que repetiram venderam ${f(Math.abs(pctRep))}% ${desceSobe(pctRep, "menos", "mais")}</h2>
     <p class="lead">Este é o comparativo mais direto, porque o produto é o mesmo nas duas semanas. A venda do conjunto foi de ${brl(cruz.vendaRepAntes)} para ${brl(cruz.vendaRepAgora)}, diferença de ${sg(cruz.deltaRep, 2, "").replace(/^([+−])/, "$1R$ ")}. ${int(cruz.sairam)} produtos de ${LA} não voltaram à oferta.</p>
-    <div class="grafico">
+    <div class="grafico" data-anima>
       ${graficoGrupos()}
     </div>
     ${tabelaProdutos(cruz.maioresAltas, "As cinco maiores altas, em valor", true)}
@@ -582,6 +582,9 @@ td.txt { white-space: normal; min-width: 160px; }
 .grafico text.queda { fill: var(--vermelho); font-weight: 600; }
 .grafico text.alta { fill: var(--verde-texto); font-weight: 600; }
 .barra-n { fill: var(--linha); }
+html.anima [data-anima] .barra-n { transform-box: fill-box; transform-origin: 0 50%; transform: scaleX(0); }
+html.anima [data-anima].ativo .barra-n { animation: crescer 1.1s var(--suave) var(--atraso, 0s) forwards; }
+@media print { html.anima [data-anima] .barra-n { transform: none !important; animation: none !important; } }
 .grafico { margin-bottom: .5rem; }
 .fluxo { display: flex; flex-wrap: wrap; align-items: stretch; gap: .6rem; background: var(--papel); border: 1px solid var(--linha); border-radius: 10px; padding: 1.1rem; }
 .fluxo .op { display: flex; align-items: center; font: 700 1.6rem/1 "Outfit", sans-serif; color: var(--tinta-suave); }

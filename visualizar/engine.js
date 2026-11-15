@@ -680,7 +680,19 @@ function analyze(input) {
     }
   }
 
-  const central = { disponivel: false, oferta: 0, cresceu: 0, caiu: 0, estavel: 0, lojaZeradaCdComSaldo: 0, ambosZerados: 0 };
+  // Central (70): produtos da oferta com as duas linhas de estoque no CD, e pares loja zerada × saldo do CD.
+  const central = {
+    disponivel: false,
+    oferta: 0,
+    semLinha: 0,
+    cresceu: 0,
+    caiu: 0,
+    estavel: 0,
+    lojaZeradaCdComSaldo: 0,
+    ambosZerados: 0,
+    produtos: [],
+    paresRuptura: [],
+  };
   const cdFinal = new Map();
   const cdInicial = new Map();
   for (const [key, value] of final) {
@@ -691,20 +703,45 @@ function analyze(input) {
   }
   central.disponivel = cdFinal.size > 0 && cdInicial.size > 0;
   for (const product of offer) {
-    if (!cdFinal.has(product) || !cdInicial.has(product)) continue;
-    central.oferta += 1;
-    const qi = cdInicial.get(product);
-    const ef = cdFinal.get(product);
-    if (ef > qi + EPS) central.cresceu += 1;
-    else if (ef < qi - EPS) central.caiu += 1;
-    else central.estavel += 1;
+    const info = dim.get(product);
+    const qi = cdInicial.has(product) ? cdInicial.get(product) : null;
+    const ef = cdFinal.has(product) ? cdFinal.get(product) : null;
+    const temLinha = qi != null && ef != null;
+    let movimento = "";
+    if (temLinha) {
+      central.oferta += 1;
+      if (ef > qi + EPS) { central.cresceu += 1; movimento = "cresceu"; }
+      else if (ef < qi - EPS) { central.caiu += 1; movimento = "caiu"; }
+      else { central.estavel += 1; movimento = "estavel"; }
+    } else {
+      central.semLinha += 1;
+    }
+    central.produtos.push({
+      produto: product,
+      descricao: info ? info.descricao : "",
+      comprador: info ? info.comprador : "Sem comprador",
+      inicialCd: qi,
+      finalCd: ef,
+      temLinha,
+      movimento,
+    });
   }
   for (const row of details) {
     if (row.situacao !== "zero") continue;
     const cd = cdFinal.get(row.produto);
     if (cd == null) continue;
-    if (cd > EPS) central.lojaZeradaCdComSaldo += 1;
-    else if (Math.abs(cd) <= EPS) central.ambosZerados += 1;
+    const tipo = cd > EPS ? "lojaZeradaCdComSaldo" : Math.abs(cd) <= EPS ? "ambosZerados" : "";
+    if (!tipo) continue;
+    central[tipo] += 1;
+    central.paresRuptura.push({
+      loja: row.loja,
+      lojaNome: row.lojaNome,
+      produto: row.produto,
+      descricao: row.descricao,
+      comprador: row.comprador,
+      finalCd: cd,
+      tipo,
+    });
   }
 
   const sistematica = { nomesDiferentes: 0, linhas: 0 };

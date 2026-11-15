@@ -1,4 +1,4 @@
-import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=48";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=49";
 
 // Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
 const buscar = (url) => fetch(url, { cache: "no-store" });
@@ -86,6 +86,11 @@ function nomeSegmento(codigo) {
 
 function dica(texto, esc, canto = false) {
   return `<i class="hint${canto ? " hint-canto" : ""}" tabindex="0">?<span class="hint-box">${esc(texto)}</span></i>`;
+}
+
+/* Dica com HTML controlado (exemplo do quadro). Só para textos montados no código, nunca para dado do arquivo. */
+function dicaHtml(html, canto = false, larga = false) {
+  return `<i class="hint${canto ? " hint-canto" : ""}${larga ? " hint-larga" : ""}" tabindex="0">?<span class="hint-box">${html}</span></i>`;
 }
 
 function parte(quantidade, base) {
@@ -1572,7 +1577,7 @@ function htmlComparacao(result, esc) {
   const cards = [
     card("subiu", "Repetidos que venderam mais", repetidos, `Produto que repetiu na oferta e ${lido} dos arquivos diários desta semana passou da anterior. O percentual é sobre os produtos que repetiram.`),
     card("caiu", "Repetidos que venderam menos", repetidos, `Produto que repetiu na oferta e ${lido} dos arquivos diários desta semana ficou abaixo da anterior. O percentual é sobre os produtos que repetiram.`),
-    card("zero", "Repetidos sem venda nas duas semanas", repetidos, "Produto que repetiu na oferta e não teve venda nos arquivos diários das duas semanas. Não usa ruptura. O percentual é sobre os produtos que repetiram."),
+    card("zero", "Repetidos sem venda nas duas semanas", repetidos, "Produto que repetiu na oferta e não teve venda nos arquivos diários das duas semanas. Atenção da equipe de compras: está ofertado e sem venda nas duas semanas, precisa ser revisto. Não usa ruptura. O percentual é sobre os produtos que repetiram."),
     card("passou", "Repetidos que passaram a vender", repetidos, "Produto que repetiu na oferta, não vendeu na semana anterior e vendeu nesta. O percentual é sobre os produtos que repetiram."),
     card("estreia-zero", "Estreantes sem venda", estreantes, "Produto que estreou nesta oferta e não teve venda nesta semana. Na semana anterior ele não estava na oferta, então essa semana não entra como venda. O percentual é sobre os estreantes."),
     card("valor-sobe-qtd-cai", "Venderam mais em R$ e menos em unidades", repetidos, "Produto que repetiu, vendeu mais em reais e menos em unidades: o preço médio de venda subiu. O percentual é sobre os produtos que repetiram."),
@@ -1594,17 +1599,37 @@ function htmlComparacao(result, esc) {
   const ponte = comp.ponte;
   const soma = ponte.quantidade + ponte.preco + ponte.semBase;
   const sg = (v) => `${v >= 0 ? "+" : "−"}${money(Math.abs(v))}`;
+  // Exemplo fixo (Tomate KG, 05 a 08/11 × 29/10 a 01/11) para o ponto de interrogação. Os números do quadro continuam sendo os da semana aberta.
+  const dicaPonte = dicaHtml(`
+      <b>Como ler este quadro</b>
+      <p>A variação da venda dos repetidos se divide em duas partes, produto a produto, e depois se soma.</p>
+      <p><b>Efeito quantidade</b> = (quantidade desta semana − quantidade da semana anterior) × preço médio da semana anterior.<br>Responde: “se eu tivesse mudado só as unidades, mantendo o preço antigo, quanto eu teria ganhado ou perdido?”</p>
+      <p><b>Efeito preço</b> = (preço médio desta semana − preço médio da semana anterior) × quantidade desta semana.<br>Responde: “com as unidades que vendi agora, quanto a mais ou a menos entrou porque o preço médio mudou?” A quantidade é a <b>desta semana</b>, não a da anterior.</p>
+      <p>Os dois efeitos são sequenciais: venda anterior → muda só a quantidade (preço antigo) → muda também o preço (quantidade nova) = venda desta semana.</p>
+      <b>Exemplo: Tomate KG</b>
+      <table class="hint-ex">
+        <thead><tr><th></th><th>Semana anterior</th><th>Esta semana</th></tr></thead>
+        <tbody>
+          <tr><td>Quantidade (kg)</td><td>4.376,27</td><td>3.828,18</td></tr>
+          <tr><td>Venda</td><td>R$ 72.747</td><td>R$ 76.205</td></tr>
+          <tr><td>Preço médio</td><td>R$ 16,62</td><td>R$ 19,91</td></tr>
+        </tbody>
+      </table>
+      <p><b>Efeito quantidade:</b> (3.828,18 − 4.376,27) × R$ 16,62 = <b>−R$ 9.111</b>. Foram 548 kg a menos, valorizados ao preço antigo.</p>
+      <p><b>Efeito preço:</b> (R$ 19,91 − R$ 16,62) × 3.828,18 = <b>+R$ 12.569</b>. O preço subiu, e esse ganho vale para os kg vendidos agora.</p>
+      <p><b>Soma:</b> −9.111 + 12.569 = <b>+R$ 3.458</b>, que é 76.205 − 72.747. O tomate vendeu mais em reais mesmo vendendo menos kg: o sistema marca “Preço mais alto”.</p>
+      <p>O efeito preço do quadro é o saldo líquido: alguns produtos sobem de preço e outros baixam. Preço médio inclui promoção e desconto.</p>`, false, true);
   return `
     <h2 class="section">Venda em relação à semana ${diaCurto(comp.inicio)} a ${diaCurto(comp.fim)} ${seletorMedida("no-card")}</h2>
     <div class="cards">${cards}</div>
     <p class="note">Classificado por ${rotuloMedida}. A venda do produto é a dos quatro arquivos diários. O percentual dos cartões é sobre os ${itens(comp.repetidos.length)} que repetiram. O de estreantes sem venda é sobre os ${itens(comp.estreantes.length)} que estrearam: eles não estavam na oferta da semana anterior, então a venda considerada é a desta semana. Sem venda nas duas semanas vale só para quem repetiu e fica para a RP. Esta comparação não usa ruptura. Os repetidos saíram de ${money(comp.vendaRepetidosAntes)} para ${money(comp.vendaRepetidosAgora)} (${money(comp.deltaRepetidos)}) e de ${qty(comp.qtdRepetidosAntes)} para ${qty(comp.qtdRepetidosAgora)} unidades (kg nos pesáveis; a soma mistura produtos e serve só de referência, a leitura é por produto). Os estreantes venderam ${money(comp.vendaEstreantes)} nesta semana. Os dois últimos cartões são o produto cuja venda em reais e em unidades andou em sentidos opostos: o preço médio mudou.</p>
-    <h2 class="section">De onde veio a variação dos repetidos</h2>
+    <h2 class="section">De onde veio a variação dos repetidos ${dicaPonte}</h2>
     <div class="table-wrap"><table class="ponte"><thead><tr><th>Parte da variação</th><th class="num">R$</th><th>Como ler</th></tr></thead><tbody>
-      <tr><td>Venda dos repetidos na semana anterior</td><td class="num">${money(comp.vendaRepetidosAntes)}</td><td>Ponto de partida.</td></tr>
-      <tr><td>Efeito quantidade</td><td class="num">${sg(ponte.quantidade)}</td><td>Quanto mudou por vender mais ou menos unidades, ao preço médio da semana anterior.</td></tr>
-      <tr><td>Efeito preço</td><td class="num">${sg(ponte.preco)}</td><td>Quanto mudou porque o preço médio de venda mudou, sobre as unidades desta semana. Inclui promoção, desconto e mudança de mix entre lojas.</td></tr>
-      <tr><td>Sem base de preço</td><td class="num">${sg(ponte.semBase)}</td><td>Produto sem venda em unidades em uma das duas semanas: não há preço para comparar.</td></tr>
-      <tr class="total"><td>Venda dos repetidos nesta semana</td><td class="num">${money(comp.vendaRepetidosAntes + soma)}</td><td>${Math.abs(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora) < 0.05 ? "Fecha com a soma dos produtos." : `Diferença de ${money(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora)}.`}</td></tr>
+      <tr><td>Venda dos repetidos na semana anterior</td><td class="num">${money(comp.vendaRepetidosAntes)}</td><td>Ponto de partida: a venda dos produtos que repetiram, na semana anterior.</td></tr>
+      <tr><td>Efeito quantidade</td><td class="num">${sg(ponte.quantidade)}</td><td>Venda que teria sido feita só com a mudança de unidades, ao preço médio da semana anterior. (qtd agora − qtd anterior) × preço anterior. Negativo = vendeu menos unidades.</td></tr>
+      <tr><td>Efeito preço</td><td class="num">${sg(ponte.preco)}</td><td>Quanto a mais ou a menos entrou porque o preço médio mudou, sobre as unidades <b>desta semana</b>. (preço agora − preço anterior) × qtd agora. Inclui promoção, desconto e mix entre lojas.</td></tr>
+      <tr><td>Sem base de preço</td><td class="num">${sg(ponte.semBase)}</td><td>Produto sem venda em unidades em uma das duas semanas: não há preço médio para comparar, então a diferença em R$ entra inteira aqui.</td></tr>
+      <tr class="total"><td>Venda dos repetidos nesta semana</td><td class="num">${money(comp.vendaRepetidosAntes + soma)}</td><td>${Math.abs(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora) < 0.05 ? "Fecha: anterior + efeito quantidade + efeito preço + sem base = venda atual." : `Diferença de ${money(comp.vendaRepetidosAntes + soma - comp.vendaRepetidosAgora)}.`}</td></tr>
     </tbody></table></div>
     <div class="duas-tabelas">${ranking(q ? "Maiores altas em quantidade entre os repetidos" : "Maiores altas entre os repetidos", altas)}${ranking(q ? "Maiores quedas em quantidade entre os repetidos" : "Maiores quedas entre os repetidos", quedas)}</div>
     ${ranking(q ? "Maiores vendas em quantidade entre os estreantes" : "Maiores vendas entre os estreantes", estreiaAlta)}
@@ -1641,6 +1666,10 @@ function renderDetalhe() {
   }
   if (state.grupo === "lancamento") {
     renderLancamento();
+    return;
+  }
+  if (String(state.grupo || "").startsWith("central-")) {
+    renderCentralDetalhe();
     return;
   }
   const rows = currentRows();
@@ -1980,15 +2009,83 @@ function renderCentral(result) {
     view.innerHTML = `<p class="note">Os arquivos de estoque desta semana não trazem a central (empresa 70) nos dois dias. Sem o saldo inicial e o saldo final da central, esta tela não calcula transferência nem compra.</p>`;
     return;
   }
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const base = result.quality.produtosOferta;
+  const card = (id, rotulo, n, texto, baseN = base) => `<button type="button" class="card comp central-card" data-central="${id}" data-rotulo="${esc(rotulo)}">${dica(texto, esc, true)}<span>${esc(rotulo)}</span><strong>${itens(n)}</strong><em class="parte">${parte(n, baseN)}</em></button>`;
   view.innerHTML = `
     <div class="cards">
-      <article class="card"><span>Oferta com saldo na central</span><strong>${qty(central.oferta)}</strong></article>
-      <article class="card"><span>Central cresceu</span><strong>${qty(central.cresceu)}</strong></article>
-      <article class="card"><span>Central caiu</span><strong>${qty(central.caiu)}</strong></article>
-      <article class="card"><span>Loja zerada e central com saldo</span><strong>${qty(central.lojaZeradaCdComSaldo)}</strong></article>
-      <article class="card"><span>Loja e central zeradas</span><strong>${qty(central.ambosZerados)}</strong></article>
+      ${card("com-linha", "Oferta com saldo na central", central.oferta, "Produto de oferta que tem as duas linhas de estoque na central (empresa 70), no arquivo inicial e no arquivo fim. O percentual é sobre os produtos de oferta desta semana.")}
+      ${card("sem-linha", "Oferta sem estoque na central", central.semLinha, "Produto de oferta que não tem as duas linhas de estoque na central. É a diferença: produtos de oferta menos os que têm saldo/linha na central. O percentual é sobre os produtos de oferta desta semana.")}
+      ${card("cresceu", "Central cresceu", central.cresceu, "Produto de oferta cuja linha na central tem estoque final maior que o inicial. O percentual é sobre os produtos de oferta desta semana.")}
+      ${card("caiu", "Central caiu", central.caiu, "Produto de oferta cuja linha na central tem estoque final menor que o inicial. O percentual é sobre os produtos de oferta desta semana.")}
+      ${card("lojaZeradaCdComSaldo", "Loja zerada e central com saldo", central.lojaZeradaCdComSaldo, "Par loja + produto em ruptura (saldo zero na loja) com saldo positivo na central: falta de transferência. O número é de pares; o percentual abaixo é sobre os produtos de oferta desta semana, só para comparação de ordem de grandeza.")}
+      ${card("ambosZerados", "Loja e central zeradas", central.ambosZerados, "Par loja + produto em ruptura com a central também zerada: falta de compra. O número é de pares; o percentual abaixo é sobre os produtos de oferta desta semana, só para comparação de ordem de grandeza.")}
     </div>
-    <p class="note">${result.quality.movimento ? "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. A saída da central escrita no arquivo é a QTDSAIDA do último movimento." : "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. Esta pasta ainda não tem a saída no arquivo de estoque."}</p>`;
+    <p class="note">Os ${itens(base)} produtos de oferta desta semana: ${itens(central.oferta)} têm linha na central (${parte(central.oferta, base)}) e ${itens(central.semLinha)} não têm (${parte(central.semLinha, base)}). Clique no cartão para ver os produtos e o saldo na central. ${result.quality.movimento ? "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. A saída da central escrita no arquivo é a QTDSAIDA do último movimento." : "Loja zerada com saldo na central indica falta de transferência. As duas zeradas indicam falta de compra. Esta pasta ainda não tem a saída no arquivo de estoque."}</p>`;
+  view.querySelectorAll("[data-central]").forEach((button) => {
+    button.onclick = (event) => {
+      if (event.target.closest(".hint")) return;
+      state.view = "detalhe";
+      state.grupo = `central-${button.dataset.central}`;
+      state.detalheTitulo = button.dataset.rotulo;
+      state.page = 0;
+      state.texto = "";
+      state.sortKey = "";
+      render();
+    };
+  });
+}
+
+function linhasCentral() {
+  const central = state.result?.central;
+  if (!central) return [];
+  const id = state.grupo.slice("central-".length);
+  if (id === "lojaZeradaCdComSaldo" || id === "ambosZerados") {
+    return (central.paresRuptura || []).filter((row) => row.tipo === id);
+  }
+  const pred = {
+    "com-linha": (row) => row.temLinha,
+    "sem-linha": (row) => !row.temLinha,
+    cresceu: (row) => row.movimento === "cresceu",
+    caiu: (row) => row.movimento === "caiu",
+    estavel: (row) => row.movimento === "estavel",
+  }[id];
+  return pred ? (central.produtos || []).filter(pred) : [];
+}
+
+function renderCentralDetalhe() {
+  let rows = linhasCentral();
+  const par = state.grupo === "central-lojaZeradaCdComSaldo" || state.grupo === "central-ambosZerados";
+  if (state.texto) {
+    const query = state.texto.toLocaleLowerCase("pt-BR");
+    rows = rows.filter((row) => `${row.produto} ${row.descricao} ${row.comprador} ${row.lojaNome || ""}`.toLocaleLowerCase("pt-BR").includes(query));
+  }
+  const esc = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const cols = par
+    ? [
+      { key: "loja", label: "Loja", value: (row) => row.lojaNome, cell: (row) => row.lojaNome },
+      { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+      { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+      { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+      { key: "finalCd", label: "Saldo na central", num: true, value: (row) => row.finalCd, cell: (row) => qty(row.finalCd) },
+    ]
+    : [
+      { key: "produto", label: "Produto", value: (row) => row.produto, cell: (row) => row.produto },
+      { key: "descricao", label: "Descrição", value: (row) => row.descricao, cell: (row) => row.descricao },
+      { key: "comprador", label: "Comprador", value: (row) => row.comprador, cell: (row) => row.comprador },
+      { key: "inicialCd", label: "Estoque inicial na central", num: true, value: (row) => row.inicialCd ?? -999, cell: (row) => row.inicialCd == null ? "Sem linha" : qty(row.inicialCd) },
+      { key: "finalCd", label: "Estoque final na central", num: true, value: (row) => row.finalCd ?? -999, cell: (row) => row.finalCd == null ? "Sem linha" : qty(row.finalCd) },
+    ];
+  place(`<div class="filters"><button type="button" class="secondary" id="voltar">Voltar à central</button><input id="f-texto" placeholder="Produto" value="${esc(state.texto)}"></div>${table(cols, rows)}<p class="note">${par ? "Cada linha é um par loja + produto em ruptura. O saldo na central é o do arquivo de estoque do último dia (empresa 70)." : "Cada linha é um produto de oferta. Estoque inicial e final são os da central (empresa 70). Sem linha = o produto não aparece nos dois arquivos de estoque da central."}</p>`);
+  document.querySelector("#voltar").onclick = () => {
+    state.view = "central";
+    state.grupo = "zero";
+    state.detalheTitulo = "";
+    state.texto = "";
+    state.page = 0;
+    render();
+  };
+  bindFilters(rows);
 }
 
 function renderQuality(result) {
@@ -2032,6 +2129,10 @@ function renderDetail() {
 function exportCsv() {
   const rows = state.view === "detalhe" && state.grupo === "venda-semana"
     ? linhasDaFaixa().map((row) => ({ produto: row.produto, descricao: row.descricao, comprador: row.comprador, semanaAnterior: state.repeticao === "estreia-zero" ? "Não estava na oferta" : row.antes, estaSemana: row.valor, diferenca: state.repeticao === "estreia-zero" ? "" : row.delta, variacao: state.repeticao === "estreia-zero" ? "" : row.percentual, quantidadeAnterior: state.repeticao === "estreia-zero" ? "" : row.qtdAntes, quantidadeAgora: row.quantidade, diferencaQuantidade: state.repeticao === "estreia-zero" ? "" : row.deltaQtd, variacaoQuantidade: state.repeticao === "estreia-zero" ? "" : row.percentualQtd, precoMedioAnterior: row.precoAntes ?? "", precoMedioAgora: row.precoAgora ?? "", leitura: LEITURA_PRECO[row.divergencia] || "" }))
+    : state.view === "detalhe" && String(state.grupo || "").startsWith("central-")
+    ? linhasCentral().map((row) => (row.loja
+      ? { loja: row.lojaNome, produto: row.produto, descricao: row.descricao, comprador: row.comprador, saldoCentral: row.finalCd }
+      : { produto: row.produto, descricao: row.descricao, comprador: row.comprador, estoqueInicialCentral: row.inicialCd ?? "Sem linha", estoqueFinalCentral: row.finalCd ?? "Sem linha" }))
     : state.view === "detalhe" && state.grupo === "lancamento"
     ? state.result?.lancamento?.porNome || []
     : state.view === "sobra" ? sobraPorComprador(state.result?.details || [], { risco: sobraCfg.risco, sobraDias: sobraCfg.dias }).flatMap((c) => c.produtos.map((p) => ({ comprador: c.comprador, produto: p.produto, descricao: p.descricao, lojas: p.lojas, estoqueInicial: p.inicial, entrada: p.entrada, entradaAutomatica: Math.round(p.entAuto), entradaManual: Math.round(p.entManual), entradaSemPedido: Math.round(p.entSemPedido), vendeu: p.venda, estoqueFinal: p.sobra, percentualSobra: p.pct == null ? "" : p.pct, situacao: p.classe, lojasEmRisco: p.lojasRisco, contaAberta: p.abertos, recebidoSemEntrada: p.recSemEntrada })))
