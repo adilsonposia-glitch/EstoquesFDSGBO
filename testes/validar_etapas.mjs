@@ -384,6 +384,7 @@ if (movimentoMode) {
   porComprador.forEach((c) => info(`Pedido atrasado em ruptura — ${c.comprador}`, `${n0(c.zeroAtrasado)} pares, ${f2(c.pendenteZeroQtd)} un, R$ ${f2(c.pendenteZeroValor)}`));
 }
 
+const paresRaw = new Map();
 // ---------- Etapa 11: abastecimento e sobra por comprador ----------
 if (movimentoMode) {
   titulo("Etapa 11 — Sobra por comprador: inicial + entrada = disponível, estoque final, abastecimento e situação do produto");
@@ -441,6 +442,7 @@ if (movimentoMode) {
       mapa.set(k, c);
     }
     if (emRisco) riscoPares += 1;
+    paresRaw.set(chave, { abertura, ent, venda, sobra, parteAuto, parteMan, parteSem, emRisco });
     // De onde vem o ajuste (resíduo) do par: saldo negativo zerado, saída registrada no arquivo de entradas, ou o que nenhum arquivo explica.
     const resid = sobra - (abertura + ent - venda);
     if (Math.abs(resid) > EPS) {
@@ -554,6 +556,122 @@ if (movimentoMode) {
   const t = lista.reduce((s, c) => ({ d: s.d + c.disponivel, s: s.s + c.sobra, a: s.a + c.ajuste }), { d: 0, s: 0, a: 0 });
   info("Rede", `disponível ${f2(t.d)} · estoque final ${f2(t.s)} (${(100 * t.s / t.d).toFixed(2).replace(".", ",")}%) · ajuste ${f2(t.a)}`);
   for (const c of lista) info(`${c.comprador}`, `${n0(c.produtos.length)} produtos: ${n0(c.nSobra)} com sobra · ${n0(c.nPadrao)} no padrão · ${n0(c.nRisco)} faltando`);
+}
+
+// ---------- Etapa 12: filtro por loja e detalhe por loja ----------
+if (movimentoMode) {
+  titulo("Etapa 12 — Filtro por loja e detalhe por loja: cada número da loja bate com a linha principal (a rede)");
+  const rede = r;
+  const listaRede = sobraPorComprador(r.details);
+  const porLoja = new Map(RETAIL.map((id) => [id, analyze({ ...entrada, loja: id })]));
+  const todasOk = [...porLoja.values()].every((x) => x.ok);
+  todasOk ? pass("12.1 A análise roda para cada uma das 13 lojas") : falha("12.1 Alguma loja não rodou");
+  const igual = (a, b, tol = 0.005) => Math.abs((a ?? 0) - (b ?? 0)) <= tol;
+
+  // 12.2 Linha da loja = linha da rede para a mesma loja e produto (objeto inteiro)
+  const redeLinha = new Map(r.details.map((d) => [`${d.loja}|${d.produto}`, JSON.stringify(d)]));
+  let diferentes = 0, faltando = 0, total = 0;
+  for (const [id, x] of porLoja) {
+    for (const d of x.details) {
+      total += 1;
+      const ref = redeLinha.get(`${d.loja}|${d.produto}`);
+      if (d.loja !== id) diferentes += 1;
+      else if (ref !== JSON.stringify(d)) diferentes += 1;
+    }
+    if (x.details.length !== r.details.filter((d) => d.loja === id).length) faltando += 1;
+  }
+  diferentes === 0 && faltando === 0 ? pass("12.2 Cada linha de loja e produto, filtrando a loja, é idêntica à linha da rede", `${n0(total)} linhas em 13 lojas`) : falha("12.2 Linhas da loja diferentes da rede", `${n0(diferentes)} diferentes, ${faltando} lojas com contagem diferente`);
+
+  // 12.3 Venda da oferta, venda total e participação
+  const somaOferta = [...porLoja.values()].reduce((t, x) => t + x.rede.venda, 0);
+  const somaTotal = [...porLoja.values()].reduce((t, x) => t + x.rede.total, 0);
+  igual(somaOferta, r.rede.venda) ? pass("12.3a Soma da venda da oferta das 13 lojas = venda da oferta da rede", f2(somaOferta)) : falha("12.3a Venda da oferta", `${f2(somaOferta)} × ${f2(r.rede.venda)}`);
+  igual(somaTotal, r.rede.total) ? pass("12.3b Soma da venda total das 13 lojas = venda total da rede", f2(somaTotal)) : falha("12.3b Venda total", `${f2(somaTotal)} × ${f2(r.rede.total)}`);
+  let erroLojaRow = 0;
+  for (const [id, x] of porLoja) {
+    const ref = r.lojas.find((l) => l.id === id);
+    if (x.lojas.length !== 1 || JSON.stringify(x.lojas[0]) !== JSON.stringify(ref)) erroLojaRow += 1;
+    if (!igual(x.rede.participacao, ref.participacao, 1e-12)) erroLojaRow += 1;
+  }
+  erroLojaRow === 0 ? pass("12.3c A linha da loja e a participação, filtrando a loja, são iguais às da tabela de lojas da rede") : falha("12.3c Linha da loja", `${erroLojaRow} lojas diferentes`);
+
+  // 12.4 Contadores da qualidade: soma das lojas = rede
+  const aditivos = Object.keys(r.quality).filter((k) => typeof r.quality[k] === "number" && !["produtosOferta", "naoFecha", "inicioFora", "fimFora", "entradasRepetidas"].includes(k));
+  const erroQ = aditivos.filter((k) => !igual([...porLoja.values()].reduce((t, x) => t + (x.quality[k] || 0), 0), r.quality[k], 0.01));
+  erroQ.length === 0 ? pass("12.4 Contadores da aba Qualidade (ruptura, causas, conta da janela, pedido recebido): soma das lojas = rede", `${aditivos.length} contadores`) : falha("12.4 Contador que não soma", erroQ.map((k) => `${k}: ${[...porLoja.values()].reduce((t, x) => t + (x.quality[k] || 0), 0)} × ${r.quality[k]}`).join("; "));
+
+  // 12.5 Compradores: soma das lojas = rede
+  const camposC = Object.keys(r.compradores[0]).filter((k) => typeof r.compradores[0][k] === "number" && k !== "margem");
+  let erroC = 0;
+  const detalheErroC = [];
+  // Linhas de pedido de lojas fora das 13 (ex.: CD 70) entram na contagem de pedidos do comprador na rede, mas em nenhuma loja.
+  // Recontadas do arquivo cru para fechar a conta: soma das 13 lojas + linhas de fora = rede.
+  const compradorDe = new Map(r.details.map((d) => [d.produto, d.comprador]));
+  const campoPorTipo = { "ABAST.AUT": "automatico", EMBALAGEM: "embalagem", MATERIAPRIMA: "materia", USOCONSUMO: "uso" };
+  const foraDasLojas = new Map();
+  linhas(entrada.automatico).slice(1).forEach((l) => {
+    const p = l.split(";");
+    if (p.length < 29 || RETAIL.includes(p[0]) || !compradorDe.has(p[5])) return;
+    const t = p[28].trim().toUpperCase();
+    const campo = t === "" ? null : campoPorTipo[t] || "manual";
+    if (!campo) return;
+    const chave = `${compradorDe.get(p[5])}|${campo}`;
+    foraDasLojas.set(chave, (foraDasLojas.get(chave) || 0) + 1);
+  });
+  let linhasFora = 0;
+  for (const v of foraDasLojas.values()) linhasFora += v;
+  for (const b of r.compradores) {
+    for (const k of camposC) {
+      const s = [...porLoja.values()].reduce((t, x) => t + (x.compradores.find((y) => y.comprador === b.comprador)?.[k] || 0), 0) + (foraDasLojas.get(`${b.comprador}|${k}`) || 0);
+      if (!igual(s, b[k], 0.01)) { erroC += 1; if (detalheErroC.length < 3) detalheErroC.push(`${b.comprador}.${k}: ${s} × ${b[k]}`); }
+    }
+  }
+  erroC === 0 ? pass("12.5 Compradores: cada campo somado nas 13 lojas = o da rede", `${r.compradores.length} compradores × ${camposC.length} campos`) : falha("12.5 Compradores", `${erroC} campos; ${detalheErroC.join("; ")}`);
+
+  // 12.6 Sobra: a linha de cada loja dentro do produto = a linha do produto filtrando a loja
+  const campos = ["inicial", "entrada", "entAuto", "entManual", "entSemPedido", "venda", "sobra", "ajuste"];
+  let erroSub = 0, subTotal = 0, erroSoma = 0, semLoja = 0;
+  const filtrada = new Map(RETAIL.map((id) => [id, new Map(sobraPorComprador(porLoja.get(id).details).flatMap((c) => c.produtos.map((p) => [`${c.comprador}|${p.produto}`, p])))]));
+  for (const c of listaRede) {
+    for (const p of c.produtos) {
+      if (p.porLoja.length !== p.lojas) semLoja += 1;
+      for (const k of campos) if (!igual(p.porLoja.reduce((t, l) => t + l[k], 0), p[k], 0.01)) erroSoma += 1;
+      for (const l of p.porLoja) {
+        subTotal += 1;
+        const f1 = filtrada.get(l.loja)?.get(`${c.comprador}|${p.produto}`);
+        if (!f1 || campos.some((k) => !igual(f1[k], l[k], 0.01)) || !igual(f1.pct ?? -1, l.pct ?? -1, 1e-9)) erroSub += 1;
+      }
+    }
+  }
+  semLoja === 0 ? pass("12.6a Cada produto tem uma linha para cada loja da base (o número de lojas do produto)") : falha("12.6a Produto com linhas de loja a menos", n0(semLoja));
+  erroSoma === 0 ? pass("12.6b A soma das lojas de cada produto = a linha do produto (inicial, entrada, automática, manual, sem pedido, vendeu, ajuste, final)") : falha("12.6b Soma das lojas ≠ produto", n0(erroSoma));
+  erroSub === 0 ? pass("12.6c Cada linha de loja dentro do produto = a mesma linha ao filtrar a loja na análise", `${n0(subTotal)} linhas`) : falha("12.6c Linha de loja ≠ filtro da loja", n0(erroSub));
+
+  // 12.7 Linha de loja recalculada do arquivo cru
+  let erroRaw = 0;
+  for (const c of listaRede) for (const p of c.produtos) for (const l of p.porLoja) {
+    const raw = paresRaw.get(`${l.loja}|${p.produto}`);
+    if (!raw || !igual(raw.abertura, l.inicial) || !igual(raw.ent, l.entrada) || !igual(raw.venda, l.venda) || !igual(raw.sobra, l.sobra) || !igual(raw.parteAuto, l.entAuto) || !igual(raw.parteMan, l.entManual) || !igual(raw.parteSem, l.entSemPedido) || raw.emRisco !== l.emRisco) erroRaw += 1;
+    else if (!igual(l.ajuste, raw.sobra - (raw.abertura + raw.ent - raw.venda))) erroRaw += 1;
+  }
+  erroRaw === 0 ? pass("12.7 Cada linha de loja dentro do produto = o par recalculado do arquivo cru (abertura, entrada, abastecimento, venda, final, ajuste, risco)", `${n0(subTotal)} linhas`) : falha("12.7 Linha de loja × arquivo cru", n0(erroRaw));
+
+  // 12.8 Totais do comprador: soma das lojas = rede
+  let erroTot = 0;
+  for (const c of listaRede) {
+    for (const k of ["inicial", "entrada", "entAuto", "entManual", "entSemPedido", "venda", "sobra", "ajuste", "pares", "lojasRisco"]) {
+      const s = RETAIL.reduce((t, id) => t + (sobraPorComprador(porLoja.get(id).details).find((x) => x.comprador === c.comprador)?.[k] || 0), 0);
+      if (!igual(s, c[k], 0.01)) erroTot += 1;
+    }
+  }
+  erroTot === 0 ? pass("12.8 Sobra por comprador: cada total somado nas 13 lojas = o total da rede", `${listaRede.length} compradores`) : falha("12.8 Totais do comprador", n0(erroTot));
+
+  // 12.9 Quadro por loja (informativo): onde cada loja fica
+  for (const id of RETAIL) {
+    const lista = sobraPorComprador(porLoja.get(id).details);
+    const s = lista.reduce((t, c) => ({ d: t.d + c.disponivel, f: t.f + c.sobra }), { d: 0, f: 0 });
+    info(`Loja ${id}`, `disponível ${f2(s.d)} · estoque final ${f2(s.f)} (${(100 * s.f / s.d).toFixed(2).replace(".", ",")}%)`);
+  }
 }
 
 console.log(`\n${falhas === 0 ? "RESULTADO: todas as etapas conferem com o arquivo." : `RESULTADO: ${falhas} verificação(ões) com FALHA.`}`);

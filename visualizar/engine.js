@@ -189,6 +189,10 @@ function validateDates(dates) {
 
 function analyze(input) {
   const salesFiles = input.sales || [];
+  // Filtro por loja (opcional). Com uma loja, a análise guarda só as linhas dessa loja. O conjunto de pares é o mesmo da rede
+  // (produtos de oferta da rede × a loja), então cada linha da loja é igual à linha da rede para a mesma loja e produto.
+  const lojaFiltro = RETAIL.includes(String(input.loja ?? "")) ? String(input.loja) : "";
+  const lojasAtivas = lojaFiltro ? [lojaFiltro] : RETAIL;
   const dates = salesFiles.map((file) => file.date);
   const period = validateDates(dates);
   if (!period.ok) {
@@ -217,6 +221,7 @@ function analyze(input) {
       if (parts.length < 7) continue;
       const store = parts[0];
       if (!KEEP.has(store) || store === "70") continue;
+      if (lojaFiltro && store !== lojaFiltro) continue;
       const product = parts[1];
       const key = `${store}|${product}`;
       const value = num(parts[4]);
@@ -269,6 +274,7 @@ function analyze(input) {
     if (!RETAIL.includes(store)) continue;
     const product = parts[6];
     offer.add(product);
+    if (lojaFiltro && store !== lojaFiltro) continue;
     const value = num(parts[10]);
     offerValue += value;
     offerValueStore[store] = (offerValueStore[store] || 0) + value;
@@ -473,7 +479,7 @@ function analyze(input) {
       n3: "",
       n4: "",
     };
-    for (const store of RETAIL) {
+    for (const store of lojasAtivas) {
       const key = `${store}|${product}`;
       const hasSale = sold.has(key);
       const qi = inicial.has(key) ? inicial.get(key) : null;
@@ -713,6 +719,7 @@ function analyze(input) {
       if (parts.length < 29) continue;
       const product = parts[5];
       if (!offer.has(product)) continue;
+      if (lojaFiltro && parts[0] !== lojaFiltro) continue;
       const info = dim.get(product);
       const buyerName = info ? info.comprador : "Sem comprador";
       const buyer = ensureBuyer(buyerName);
@@ -857,7 +864,7 @@ function analyze(input) {
     buyer.venda = offerValueBuyer[buyer.comprador] || 0;
   }
 
-  const lojaRows = RETAIL.map((id) => {
+  const lojaRows = lojasAtivas.map((id) => {
     const row = ensureStore(id);
     row.venda = offerValueStore[id] || 0;
     row.totalLoja = periodByStore[id] || 0;
@@ -869,6 +876,7 @@ function analyze(input) {
 
   return {
     ok: true,
+    loja: lojaFiltro,
     periodo: period.dates,
     rede: {
       venda: offerValue,
@@ -930,9 +938,25 @@ function sobraPorComprador(details, opcoes = {}) {
     const parteSem = aut + man > 0 ? 0 : entrada;
     let p = c.mapa.get(row.produto);
     if (!p) {
-      p = { produto: row.produto, descricao: row.descricao, inicial: 0, entrada: 0, ...zeros(), venda: 0, sobra: 0, lojas: 0, zeradas: 0, lojasRisco: 0, abertos: 0, recSemEntrada: 0 };
+      p = { produto: row.produto, descricao: row.descricao, inicial: 0, entrada: 0, ...zeros(), venda: 0, sobra: 0, lojas: 0, zeradas: 0, lojasRisco: 0, abertos: 0, recSemEntrada: 0, porLoja: [] };
       c.mapa.set(row.produto, p);
     }
+    // Linha da loja dentro do produto: os mesmos números do produto, só desta loja. A soma das lojas é o produto.
+    p.porLoja.push({
+      loja: row.loja,
+      lojaNome: row.lojaNome,
+      inicial: abertura,
+      entrada,
+      entAuto: parteAuto,
+      entManual: parteManual,
+      entSemPedido: parteSem,
+      venda,
+      sobra,
+      ajuste: sobra - (abertura + entrada - venda),
+      pct: abertura + entrada > EPS ? sobra / (abertura + entrada) : null,
+      emRisco,
+      cobertura: coberturaLoja,
+    });
     for (const alvo of [c, p]) {
       alvo.inicial += abertura;
       alvo.entrada += entrada;

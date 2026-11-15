@@ -265,3 +265,24 @@ button.card:hover { border-color: var(--navy); }
 .tag-misto { background: #fdf0d2; color: #7a5200; }
 
 .sobra-prod td.entrada .tag { margin-left: 6px; }
+
+/* Filtro por loja (todo o projeto) e lojas dentro do produto */
+.filtro-loja { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.filtro-loja select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; font: inherit; color: var(--ink); background: #fff; max-width: 210px; }
+.filtro-loja.no-topo select { border-color: var(--verde); font-weight: 600; }
+.com-loja .filtro-loja select { border-color: var(--vermelho); box-shadow: 0 0 0 2px rgba(200, 30, 30, 0.12); }
+.aviso-loja { align-self: center; background: var(--vermelho); color: #fff; border-radius: 10px; padding: 4px 10px; font-size: 12px; font-weight: 600; }
+.aviso-loja[hidden] { display: none; }
+.sobra-acoes { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.sobra-comp-topo .sobra-acoes { flex-direction: row; align-items: center; }
+.sobra-card .sobra-acoes .filtro-loja { flex-direction: column; align-items: flex-end; gap: 2px; }
+.sobra-comp-topo .sobra-acoes .filtro-loja { flex-direction: row; }
+.seta-lojas { border: 0; background: none; cursor: pointer; font-size: 14px; line-height: 1; color: var(--verde); padding: 0 6px 0 0; }
+.dica-lojas { font-weight: 400; color: var(--muted); font-size: 12px; }
+.sobra-lojas-ctl { margin: 4px 0; }
+.lojas-todas { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; color: var(--navy); }
+.sobra-prod tr.sub-loja[hidden] { display: none; }
+.sobra-prod tr.sub-loja td { background: #f7faf7; font-size: 12px; color: var(--ink); }
+.sobra-prod tr.sub-loja td.prod { padding-left: 22px; overflow: visible; text-overflow: clip; }
+.sobra-prod tr.sub-loja.sub-risco td.prod { box-shadow: inset 4px 0 0 var(--vermelho); }
+.sobra-prod tr.sub-loja small.alerta { margin-left: 8px; display: inline; }

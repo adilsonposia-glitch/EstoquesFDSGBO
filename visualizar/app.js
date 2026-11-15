@@ -1,4 +1,4 @@
-import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=47";
+import { analyze, sobraPorComprador, lojasFromXlsx, LOJAS, RETAIL } from "./engine.js?v=48";
 
 // Os arquivos da semana mudam sem mudar de nome. Sem isso o navegador serve a cópia antiga do cache (já houve Dimproduto antigo na tela).
 const buscar = (url) => fetch(url, { cache: "no-store" });
@@ -28,6 +28,8 @@ const state = {
   page: 0,
   pageSize: 40,
   loja: "",
+  lojaGlobal: "",
+  cacheLoja: new Map(),
   comprador: "",
   produto: "",
   departamento: "",
@@ -468,6 +470,7 @@ function numeroBr(value) {
 }
 
 function somarVendaDiaria(text, acc) {
+  acc.produtosLoja = acc.produtosLoja || {};
   const rows = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   for (let index = 1; index < rows.length; index += 1) {
     if (!rows[index]) continue;
@@ -479,6 +482,11 @@ function somarVendaDiaria(text, acc) {
     atual.valor += valor;
     atual.quantidade += quantidade;
     acc.produtos[parts[1]] = atual;
+    const daLoja = (acc.produtosLoja[parts[0]] = acc.produtosLoja[parts[0]] || {});
+    const naLoja = daLoja[parts[1]] || { valor: 0, quantidade: 0 };
+    naLoja.valor += valor;
+    naLoja.quantidade += quantidade;
+    daLoja[parts[1]] = naLoja;
     acc.lojas[parts[0]] = (acc.lojas[parts[0]] || 0) + valor;
     acc.total += valor;
   }
@@ -515,6 +523,7 @@ async function vendaDaRaiz() {
     inicio: raiz.found.sales[0],
     fim: raiz.found.sales[raiz.found.sales.length - 1],
     produtos: acc.produtos,
+    produtosLoja: acc.produtosLoja,
     lojas: acc.lojas,
     oferta: acc.oferta,
     total: acc.total,
@@ -538,8 +547,17 @@ function vendaAtualPorProduto(result) {
 }
 
 function comparacaoVenda(result) {
-  const anterior = state.anterior;
+  let anterior = state.anterior;
   if (!anterior) return null;
+  // Com uma loja escolhida, a semana anterior também é só dessa loja (mesmos arquivos, mesma regra).
+  if (result.loja) {
+    anterior = {
+      ...anterior,
+      produtos: anterior.produtosLoja?.[result.loja] || {},
+      total: anterior.lojas[result.loja] || 0,
+      vendaOferta: anterior.oferta[result.loja] || 0,
+    };
+  }
   const info = repeticaoOferta(result);
   if (!info.anterior) return null;
   const atuais = vendaAtualPorProduto(result);
@@ -676,6 +694,49 @@ function marcarSemanas() {
   raiz.setAttribute("aria-pressed", state.qual === "raiz" ? "true" : "false");
 }
 
+/* Filtro por loja de todo o projeto. A análise é refeita só com a loja escolhida (engine, opção loja); o conjunto de produtos é o da rede,
+   então a linha de uma loja é a mesma da rede para aquela loja. Resultados já calculados ficam em memória durante a semana aberta. */
+const LOJAS_VAREJO = Object.entries(LOJAS).filter(([id]) => RETAIL.includes(id));
+
+function seletorLoja(classe = "") {
+  return `<label class="filtro-loja ${classe}"><span>Loja</span><select class="sel-loja" title="Vale para todas as telas, a capa e as exportações"><option value="">Todas as lojas (rede)</option>${LOJAS_VAREJO.map(([id, nome]) => `<option value="${id}" ${state.lojaGlobal === id ? "selected" : ""}>${nome}</option>`).join("")}</select></label>`;
+}
+
+function sincronizarLoja() {
+  document.querySelectorAll(".sel-loja").forEach((el) => { el.value = state.lojaGlobal; });
+  const nome = state.lojaGlobal ? LOJAS[state.lojaGlobal] : "";
+  document.body.classList.toggle("com-loja", Boolean(state.lojaGlobal));
+  const aviso = document.querySelector("#aviso-loja");
+  if (aviso) {
+    aviso.hidden = !state.lojaGlobal;
+    aviso.textContent = state.lojaGlobal ? `Só a loja ${nome}` : "";
+  }
+}
+
+async function trocarLoja(id) {
+  const nova = RETAIL.includes(id) ? id : "";
+  if (nova === state.lojaGlobal && state.result) return;
+  state.lojaGlobal = nova;
+  state.loja = nova;
+  state.page = 0;
+  sincronizarLoja();
+  if (!state.files) return;
+  let result = state.cacheLoja.get(nova);
+  if (!result) {
+    setProgress(0.96, nova ? `Calculando a loja ${LOJAS[nova]}` : "Calculando a rede");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    result = analyze({ ...state.files, coverLimit: state.coverLimit, loja: nova });
+    if (!result.ok) {
+      setProgress(0, result.message);
+      return;
+    }
+    state.cacheLoja.set(nova, result);
+  }
+  state.result = result;
+  setProgress(1, `Semana ${result.periodo[0]} a ${result.periodo[3]}. ${nova ? `Loja ${LOJAS[nova]}.` : "Todas as lojas."} ${result.quality.produtosOferta.toLocaleString("pt-BR")} produtos de oferta.`);
+  render();
+}
+
 async function run(loader) {
   try {
     const files = await loader();
@@ -683,12 +744,16 @@ async function run(loader) {
     state.anterior = files.anterior || null;
     setProgress(0.96, "Calculando a semana");
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const result = analyze({ ...files, coverLimit: state.coverLimit });
+    state.cacheLoja = new Map();
+    const result = analyze({ ...files, coverLimit: state.coverLimit, loja: state.lojaGlobal });
     if (!result.ok) {
       setProgress(0, result.message);
       return;
     }
     state.result = result;
+    state.cacheLoja.set(state.lojaGlobal, result);
+    state.loja = state.lojaGlobal;
+    sincronizarLoja();
     state.page = 0;
     if (state.view === "detalhe") {
       state.view = "capa";
@@ -771,7 +836,7 @@ function filters() {
   const esc = (value) => String(value).replace(/"/g, "&quot;");
   return `
     <div class="filters">
-      <select id="f-loja"><option value="">Todas as lojas</option>${stores.map(([id, name]) => `<option value="${id}" ${state.loja === id ? "selected" : ""}>${name}</option>`).join("")}</select>
+      <select id="f-loja" ${state.lojaGlobal ? `disabled title="Filtro de loja ligado em todo o projeto (alto da página)"` : ""}><option value="">Todas as lojas</option>${stores.map(([id, name]) => `<option value="${id}" ${(state.lojaGlobal || state.loja) === id ? "selected" : ""}>${name}</option>`).join("")}</select>
       <select id="f-comprador"><option value="">Todos os compradores</option>${buyers.map((name) => `<option ${state.comprador === name ? "selected" : ""}>${esc(name)}</option>`).join("")}</select>
       <select id="f-departamento"><option value="">Todos os departamentos</option>${departamentos.map((name) => `<option value="${esc(name)}" ${state.departamento === name ? "selected" : ""}>${name}</option>`).join("")}</select>
       <select id="f-secao"><option value="">Todas as seções</option>${secoes.map((name) => `<option value="${esc(name)}" ${state.secao === name ? "selected" : ""}>${name}</option>`).join("")}</select>
@@ -996,7 +1061,8 @@ function render() {
     view.innerHTML = `<p class="note">Escolha a pasta da semana ou abra esta página pelo servidor local da pasta do projeto e aperte Atualizar.</p>`;
     return;
   }
-  subtitle.textContent = `${result.periodo[0]} a ${result.periodo[3]} · quinta a domingo`;
+  subtitle.textContent = `${result.periodo[0]} a ${result.periodo[3]} · quinta a domingo${state.lojaGlobal ? ` · só a loja ${LOJAS[state.lojaGlobal]}` : ""}`;
+  sincronizarLoja();
   if (state.view === "capa") renderCapa(result);
   else if (state.view === "detalhe") renderDetalhe();
   else if (state.view === "lojas") renderLojas(result);
@@ -1663,7 +1729,7 @@ function renderSobra(result) {
   const cabecaComp = () => COLS.map((x) => `<th class="${x.txt ? "txt" : "num"}"><button type="button" class="sobra-ordem${sobraCfg.ordem === x.k ? " ativa" : ""}" data-ordem="${x.k}">${x.t}${sobraCfg.ordem === x.k ? (sobraCfg.sentido === "asc" ? " ▲" : " ▼") : ""}</button></th>`).join("");
   const comparacao = `
     <section class="sobra-comp" id="sobra-comp">
-      <div class="sobra-comp-topo"><h2>Comparação entre compradores</h2>${botao("sobra-comp")}</div>
+      <div class="sobra-comp-topo"><h2>Comparação entre compradores</h2><div class="sobra-acoes">${botao("sobra-comp")}${seletorLoja("no-card")}</div></div>
       <div class="table-wrap"><table class="sobra-tabela"><thead><tr>${cabecaComp()}</tr></thead>
         <tbody>${ordenar(lista).map(linhaComp).join("")}</tbody>
         <tfoot>${linhaComp(rede)}</tfoot></table></div>
@@ -1680,7 +1746,10 @@ function renderSobra(result) {
     return `<span class="tag tag-${partes.length === 1 ? partes[0].k : "misto"}" title="${esc(dica)}">${rotulo}</span>`;
   };
   const ajusteCel = (v) => (Math.abs(v) < 0.5 ? "—" : (v > 0 ? "+" : "−") + qty(Math.abs(v)));
-  const linhaProd = (p) => `<tr class="c-${p.classe}"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><b>${esc(p.produto)}</b> ${esc(p.descricao)}${p.lojasRisco ? `<small class="alerta">${p.lojasRisco} de ${p.lojas} lojas sem estoque ou em risco</small>` : ""}</td><td class="num">${qty(p.inicial)}</td><td class="num entrada">${qty(p.entrada)} ${abastecimento(p)}</td><td class="num">${qty(p.venda)}</td><td class="num ajuste">${ajusteCel(p.ajuste)}</td><td class="num"><b>${qty(p.sobra)}</b></td><td class="num">${p.pct == null ? "—" : pct(p.pct)}</td></tr>`;
+  const celulas = (o, sub = false) => `<td class="num">${qty(o.inicial)}</td><td class="num entrada">${qty(o.entrada)} ${sub && o.entrada <= 0.05 ? "" : abastecimento(o)}</td><td class="num">${qty(o.venda)}</td><td class="num ajuste">${ajusteCel(o.ajuste)}</td><td class="num"><b>${qty(o.sobra)}</b></td><td class="num">${o.pct == null ? "—" : pct(o.pct)}</td>`;
+  /* Um nível a mais: as lojas do produto (mesmas colunas do produto; a soma das lojas é a linha do produto). */
+  const linhaLoja = (l) => `<tr class="sub-loja${l.emRisco ? " sub-risco" : ""}" hidden><td class="txt prod" title="${esc(l.lojaNome)}${l.emRisco ? " · sem estoque ou em risco" : ""}"><span class="sub-nome">${esc(l.lojaNome)}</span>${l.emRisco ? `<small class="alerta">sem estoque ou em risco</small>` : ""}</td>${celulas(l, true)}</tr>`;
+  const linhaProd = (p) => `<tr class="c-${p.classe} linha-prod"><td class="txt prod" title="${esc(p.produto)} · ${esc(p.descricao)}"><button type="button" class="seta-lojas" aria-expanded="false" title="Mostrar as lojas deste produto">▸</button><b>${esc(p.produto)}</b> ${esc(p.descricao)}${p.lojasRisco ? `<small class="alerta">${p.lojasRisco} de ${p.lojas} lojas sem estoque ou em risco</small>` : ""}</td>${celulas(p)}</tr>${p.porLoja.map(linhaLoja).join("")}`;
   const ordemGrupo = {
     sobra: (l) => l,
     padrao: (l) => l,
@@ -1698,7 +1767,7 @@ function renderSobra(result) {
       <header>
         <div><h3>${esc(c.comprador)}</h3><small>${itens(n)} produtos · ${itens(c.pares)} pares de loja</small></div>
         <b class="sobra-pct" title="Estoque final ÷ (estoque inicial + entrada). Estoque inicial ${qty(c.inicial)} + entrada ${qty(c.entrada)} = ${qty(c.disponivel)}.">${c.pct == null ? "—" : pct(c.pct)}<small>do disponível sobrou</small></b>
-        ${botao("card")}
+        <div class="sobra-acoes">${botao("card")}${seletorLoja("no-card")}</div>
       </header>
       <p class="sobra-conta"><span><em>Estoque inicial</em>${qty(c.inicial)}</span><i>+</i><span><em title="Entradas do Entradas.txt nos quatro dias do período.">Entrada</em>${qty(c.entrada)}</span><i>=</i><span><em>Disponível</em>${qty(c.disponivel)}</span><i>−</i><span><em>Vendeu</em>${qty(c.venda)}</span><i>±</i><span class="ajuste"><em title="O que a conta não explica: quebra, transferência de saída ou entrada não registrada.">Ajuste</em>${Math.abs(c.ajuste) < 0.05 ? "0" : (c.ajuste > 0 ? "+" : "−") + qty(Math.abs(c.ajuste))}</span><i>→</i><span class="destaque"><em>Estoque final</em>${qty(c.sobra)}</span></p>
       <p class="sobra-origem" title="Cada entrada é ligada ao abastecimento do par loja + produto no arquivo de pedidos. Sem pedido: transferência entre lojas e outras entradas que o arquivo de pedidos não traz.">Entrada por abastecimento: ${partes.length ? partes.map((x) => `${x.nome.toLowerCase()} <b>${qty(Math.round(x.v))}</b>`).join(" · ") : "sem entrada"}</p>
@@ -1710,7 +1779,8 @@ function renderSobra(result) {
         </div>
       </div>
       <details class="sobra-lista">
-        <summary>Ver os produtos do grupo escolhido</summary>
+        <summary>Ver os produtos do grupo escolhido <span class="dica-lojas">· a seta ▸ abre as lojas do produto</span></summary>
+        <p class="sobra-lojas-ctl"><button type="button" class="lojas-todas" data-abrir="1">Abrir as lojas de todos os produtos</button></p>
         <div class="table-wrap"><table class="sobra-tabela sobra-prod">
           <thead><tr><th class="txt">Produto</th><th class="num" title="Saldo de abertura do período, antes do 1º dia.">Estoque inicial</th><th class="num" title="Entradas do Entradas.txt nos quatro dias. A etiqueta diz o abastecimento: automático, manual ou sem pedido no arquivo de pedidos. Misto: mais de um; passe o mouse para ver as quantidades.">Entrada</th><th class="num">Vendeu</th><th class="num" title="Fecha a conta da linha: estoque inicial + entrada − vendeu + ajuste = estoque final. É o que os arquivos não explicam: quebra, transferência de saída, entrada não registrada, saldo negativo do sistema.">Ajuste</th><th class="num" title="Estoque do último dia">Estoque final</th><th class="num" title="Estoque final ÷ (estoque inicial + entrada)">% sobra</th></tr></thead>
           ${GRUPOS_SOBRA.map((g) => tabelaGrupo(c, g)).join("")}
@@ -1751,6 +1821,26 @@ function renderSobra(result) {
       if (det) det.open = true;
       const pedido = alvo.requestFullscreen?.();
       if (pedido && typeof pedido.catch === "function") pedido.catch(() => {});
+      return;
+    }
+    const seta = event.target.closest(".seta-lojas");
+    if (seta) {
+      const linha = seta.closest("tr");
+      const abrir = seta.getAttribute("aria-expanded") !== "true";
+      seta.setAttribute("aria-expanded", abrir ? "true" : "false");
+      seta.textContent = abrir ? "▾" : "▸";
+      seta.title = abrir ? "Ocultar as lojas deste produto" : "Mostrar as lojas deste produto";
+      for (let prox = linha.nextElementSibling; prox && prox.classList.contains("sub-loja"); prox = prox.nextElementSibling) prox.hidden = !abrir;
+      return;
+    }
+    const todas = event.target.closest(".lojas-todas");
+    if (todas) {
+      const abrir = todas.dataset.abrir === "1";
+      const lista = todas.closest(".sobra-lista");
+      lista.querySelectorAll(".seta-lojas").forEach((b) => { b.setAttribute("aria-expanded", abrir ? "true" : "false"); b.textContent = abrir ? "▾" : "▸"; });
+      lista.querySelectorAll(".sub-loja").forEach((tr) => { tr.hidden = !abrir; });
+      todas.dataset.abrir = abrir ? "0" : "1";
+      todas.textContent = abrir ? "Ocultar as lojas de todos os produtos" : "Abrir as lojas de todos os produtos";
       return;
     }
     const ordem = event.target.closest(".sobra-ordem");
@@ -1902,5 +1992,11 @@ document.querySelector("#pick").onclick = async () => {
   run(() => loadPickedDirectory(dir));
 };
 document.querySelector("#export").onclick = exportCsv;
+// Filtro por loja: o do alto da página e os dos cards são o mesmo filtro.
+document.querySelector("#loja-global-caixa").innerHTML = seletorLoja("no-topo");
+document.addEventListener("change", (event) => {
+  if (event.target.classList?.contains("sel-loja")) trocarLoja(event.target.value);
+});
+window.__fdsTeste = { state, trocarLoja, comparacaoVenda, sobraPorComprador };
 render();
 run(loadServerFiles);
